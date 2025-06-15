@@ -42,6 +42,73 @@ func (t *timezoneFlag) String() string {
 	return t.loc.String()
 }
 
+func processSnapshots(name string, times []time.Time, lines []string, policy snappr.Policy, loc *time.Location, invert, why, summarize bool, stdout, stderr io.Writer) {
+	snapshots := make([]time.Time, 0, len(times))
+	snapshotMap := make([]int, 0, len(times))
+	for i, t := range times {
+		if !t.IsZero() {
+			snapshots = append(snapshots, t)
+			snapshotMap = append(snapshotMap, i)
+		}
+	}
+
+	keep, need := snappr.Prune(snapshots, policy, loc)
+
+	discard := make([]bool, len(times))
+	for at, reason := range keep {
+		discard[snapshotMap[at]] = len(reason) == 0
+	}
+
+	for i, x := range discard {
+		if invert {
+			if x {
+				continue
+			}
+		} else {
+			if !x {
+				continue
+			}
+		}
+		fmt.Fprintln(stdout, lines[i])
+	}
+
+	var pruned int
+	ndig := digits(len(keep))
+	for at, reason := range keep {
+		if len(reason) > 0 {
+			if why {
+				ps := make([]string, len(reason))
+				for i, period := range reason {
+					ps[i] = period.String()
+				}
+				fmt.Fprintf(stderr, "snappr: why: keep [%*d/%*d] %s (%s) :: %s\n",
+					ndig, at+1, ndig, len(keep),
+					snapshots[at].Format("Mon 2006 Jan _2 15:04:05"), name, strings.Join(ps, ", "))
+			}
+		} else {
+			pruned++
+		}
+	}
+
+	if summarize {
+		var cmax int
+		policy.Each(func(_ snappr.Period, count int) {
+			cmax = max(cmax, count)
+		})
+		cdig := digits(cmax)
+		need.Each(func(period snappr.Period, count int) {
+			if count < 0 {
+				fmt.Fprintf(stderr, "snappr: summary (%s): (%s) %s\n", name, strings.Repeat("*", cdig), period)
+			} else if count == 0 {
+				fmt.Fprintf(stderr, "snappr: summary (%s): (%*d) %s\n", name, cdig, policy.Get(period), period)
+			} else {
+				fmt.Fprintf(stderr, "snappr: summary (%s): (%*d) %s (missing %d)\n", name, cdig, policy.Get(period), period, count)
+			}
+		})
+		fmt.Fprintf(stderr, "snappr: summary (%s): pruning %d/%d snapshots\n", name, pruned, len(keep))
+	}
+}
+
 func (t *timezoneFlag) Set(s string) error {
 	switch string(s) {
 	case "":
@@ -63,17 +130,18 @@ func (t *timezoneFlag) Set(s string) error {
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	opt := pflag.NewFlagSet(args[0], pflag.ContinueOnError)
 	var (
-		Quiet     = opt.BoolP("quiet", "q", false, "do not show warnings about invalid or unmatched input lines")
-		Extract   = opt.StringP("extract", "e", "", "extract the timestamp from each input line using the provided regexp, which must contain up to one capture group")
-		Extended  = opt.BoolP("extended-regexp", "E", false, "use full regexp syntax rather than POSIX (see pkg.go.dev/regexp/syntax)")
-		Only      = opt.BoolP("only", "o", false, "only print the part of the line matching the regexp")
-		Parse     = opt.StringP("parse", "p", "", "parse the timestamp using the specified Go time format (see pkg.go.dev/time#pkg-constants and the examples below) rather than a unix timestamp")
-		ParseIn   = pflag_TimezoneP(opt, "parse-timezone", "Z", nil, "use a specific timezone rather than whatever is set for --timezone if no timezone is parsed from the timestamp itself")
-		In        = pflag_TimezoneP(opt, "timezone", "z", time.UTC, "convert all timestamps to this timezone while pruning snapshots (use \"local\" for the default system timezone)")
-		Invert    = opt.BoolP("invert", "v", false, "output the snapshots to keep instead of the ones to prune")
-		Why       = opt.BoolP("why", "w", false, "explain why each snapshot is being kept to stderr")
-		Summarize = opt.BoolP("summarize", "s", false, "summarize retention policy results to stderr")
-		Help      = opt.BoolP("help", "h", false, "show this help text")
+		Quiet       = opt.BoolP("quiet", "q", false, "do not show warnings about invalid or unmatched input lines")
+		Extract     = opt.StringP("extract", "e", "", "extract the timestamp from each input line using the provided regexp, which must contain up to one capture group")
+		Extended    = opt.BoolP("extended-regexp", "E", false, "use full regexp syntax rather than POSIX (see pkg.go.dev/regexp/syntax)")
+		Only        = opt.BoolP("only", "o", false, "only print the part of the line matching the regexp")
+		Parse       = opt.StringP("parse", "p", "", "parse the timestamp using the specified Go time format (see pkg.go.dev/time#pkg-constants and the examples below) rather than a unix timestamp")
+		ParseIn     = pflag_TimezoneP(opt, "parse-timezone", "Z", nil, "use a specific timezone rather than whatever is set for --timezone if no timezone is parsed from the timestamp itself")
+		In          = pflag_TimezoneP(opt, "timezone", "z", time.UTC, "convert all timestamps to this timezone while pruning snapshots (use \"local\" for the default system timezone)")
+		Invert      = opt.BoolP("invert", "v", false, "output the snapshots to keep instead of the ones to prune")
+		Why         = opt.BoolP("why", "w", false, "explain why each snapshot is being kept to stderr")
+		Summarize   = opt.BoolP("summarize", "s", false, "summarize retention policy results to stderr")
+		GroupByName = opt.BoolP("group-by-name", "n", false, "group snapshots by extracted name (from the first capture group in --extract)")
+		Help        = opt.BoolP("help", "h", false, "show this help text")
 	)
 	if err := opt.Parse(args[1:]); err != nil {
 		fmt.Fprintf(stderr, "snappr: fatal: %v\n", err)
@@ -134,8 +202,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		} else {
 			extract, err = regexp.CompilePOSIX(*Extract)
 		}
-		if err == nil && extract.NumSubexp() > 1 {
-			err = fmt.Errorf("must contain no more than one capture group")
+		if err == nil && extract.NumSubexp() > 2 {
+			err = fmt.Errorf("must contain no more than two capture groups")
 		}
 		if err != nil {
 			fmt.Fprintf(stderr, "snappr: fatal: --extract regexp is invalid: %v\n", err)
@@ -143,7 +211,18 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 
-	times, lines, err := func() (times []time.Time, lines []string, err error) {
+	type NamedSnapshots struct {
+		Times []time.Time
+		Lines []string
+	}
+
+	var (
+		times   []time.Time
+		lines   []string
+		grouped map[string]*NamedSnapshots
+	)
+
+	err = func() error {
 		sc := bufio.NewScanner(stdin)
 		for sc.Scan() {
 			line := sc.Text()
@@ -151,123 +230,96 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				continue
 			}
 
-			var bad bool
+			var (
+				bad  bool
+				ts   string
+				name string
+			)
 
-			var ts string
 			if extract == nil {
 				ts = strings.TrimSpace(line)
+				name = "default"
 			} else {
-				if m := extract.FindStringSubmatch(line); m == nil {
+				m := extract.FindStringSubmatch(line)
+				if m == nil || (*GroupByName && len(m) < 3) || (!*GroupByName && len(m) < 2) {
 					if !*Quiet {
 						fmt.Fprintf(stderr, "snappr: warning: failed extract timestamp from %q using regexp %q\n", line, extract.String())
-						bad = true
 					}
+					continue
+				}
+				if *GroupByName {
+					name = m[1]
+					ts = m[2]
 				} else {
-					if *Only {
-						line = m[0]
-					}
-					ts = m[len(m)-1]
+					ts = m[1]
+				}
+				if *Only {
+					line = m[0]
 				}
 			}
 
 			var t time.Time
-			if !bad {
-				if *Parse == "" {
-					if n, err := strconv.ParseInt(ts, 10, 64); err != nil {
-						if !*Quiet {
-							fmt.Fprintf(stderr, "snappr: warning: failed to parse unix timestamp %q: %v\n", ts, err)
-						}
-						bad = true
-					} else {
-						t = time.Unix(n, 0)
+			if *Parse == "" {
+				n, err := strconv.ParseInt(ts, 10, 64)
+				if err != nil {
+					if !*Quiet {
+						fmt.Fprintf(stderr, "snappr: warning: failed to parse unix timestamp %q: %v\n", ts, err)
 					}
+					bad = true
 				} else {
-					if v, err := time.ParseInLocation(*Parse, ts, *ParseIn); err != nil {
-						if !*Quiet {
-							fmt.Fprintf(stderr, "snappr: warning: failed to parse timestamp %q using layout %q: %v\n", ts, *Parse, err)
-						}
-						bad = true
-					} else {
-						t = v
-					}
+					t = time.Unix(n, 0)
 				}
-				t = t.In(*In)
-			}
-
-			if bad {
-				times = append(times, time.Time{})
 			} else {
-				times = append(times, t)
+				v, err := time.ParseInLocation(*Parse, ts, *ParseIn)
+				if err != nil {
+					if !*Quiet {
+						fmt.Fprintf(stderr, "snappr: warning: failed to parse timestamp %q using layout %q: %v\n", ts, *Parse, err)
+					}
+					bad = true
+				} else {
+					t = v
+				}
 			}
-			lines = append(lines, line)
+			t = t.In(*In)
+
+			if *GroupByName {
+				if grouped == nil {
+					grouped = make(map[string]*NamedSnapshots)
+				}
+				if _, ok := grouped[name]; !ok {
+					grouped[name] = &NamedSnapshots{}
+				}
+				grouped[name].Lines = append(grouped[name].Lines, line)
+				if bad {
+					grouped[name].Times = append(grouped[name].Times, time.Time{})
+				} else {
+					grouped[name].Times = append(grouped[name].Times, t)
+				}
+			} else {
+				lines = append(lines, line)
+				if bad {
+					times = append(times, time.Time{})
+				} else {
+					times = append(times, t)
+				}
+			}
 		}
-		return times, lines, sc.Err()
+		return sc.Err()
+
 	}()
 	if err != nil {
 		fmt.Fprintf(stderr, "snappr: fatal: failed to read stdin: %v\n", err)
 		return 1
 	}
 
-	snapshots := make([]time.Time, 0, len(times))
-	snapshotMap := make([]int, 0, len(times))
-	for i, t := range times {
-		if !t.IsZero() {
-			snapshots = append(snapshots, t)
-			snapshotMap = append(snapshotMap, i)
+	if *GroupByName {
+		for name, snap := range grouped {
+			processSnapshots(name, snap.Times, snap.Lines, policy, *In, *Invert, *Why, *Summarize, stdout, stderr)
 		}
+	} else {
+		processSnapshots("default", times, lines, policy, *In, *Invert, *Why, *Summarize, stdout, stderr)
 	}
 
-	keep, need := snappr.Prune(snapshots, policy, *In)
-
-	discard := make([]bool, len(times))
-	for at, why := range keep {
-		discard[snapshotMap[at]] = len(why) == 0
-	}
-	for i, x := range discard {
-		if *Invert {
-			if x {
-				continue
-			}
-		} else {
-			if !x {
-				continue
-			}
-		}
-		fmt.Fprintln(stdout, lines[i])
-	}
-
-	var pruned int
-	ndig := digits(len(keep))
-	for at, why := range keep {
-		if len(why) != 0 {
-			ps := make([]string, len(why))
-			for i, period := range why {
-				ps[i] = period.String()
-			}
-			if *Why {
-				fmt.Fprintf(stderr, "snappr: why: keep [%*d/%*d] %s :: %s\n", ndig, at+1, ndig, len(keep), snapshots[at].Format("Mon 2006 Jan _2 15:04:05"), strings.Join(ps, ", "))
-			}
-		} else {
-			pruned++
-		}
-	}
-	if *Summarize {
-		var cmax int
-		policy.Each(func(_ snappr.Period, count int) {
-			cmax = max(cmax, count)
-		})
-		cdig := digits(cmax)
-		need.Each(func(period snappr.Period, count int) {
-			if count < 0 {
-				fmt.Fprintf(stderr, "snappr: summary: (%s) %s\n", strings.Repeat("*", cdig), period)
-			} else if count == 0 {
-				fmt.Fprintf(stderr, "snappr: summary: (%*d) %s\n", cdig, policy.Get(period), period)
-			} else {
-				fmt.Fprintf(stderr, "snappr: summary: (%*d) %s (missing %d)\n", cdig, policy.Get(period), period, count)
-			}
-		})
-		fmt.Fprintf(stderr, "snappr: summary: pruning %d/%d snapshots\n", pruned, len(keep))
-	}
 	return 0
 }
 
