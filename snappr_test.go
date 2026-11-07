@@ -378,6 +378,7 @@ func TestPrune(t *testing.T) {
 			policy.MustSet(Secondly, int(time.Hour/time.Second), 6)
 			policy.MustSet(Last, 1, 3)
 
+			// FIXME(monthly-alignment): hash must be regenerated after monthly:N alignment fix
 			return times, policy, "a48749a9d6e92ebbc09a5fb3b46a304879fdb1aeebe28264c0885cea0048f8d1"
 		},
 		func() (times []time.Time, policy Policy, output string) {
@@ -396,6 +397,7 @@ func TestPrune(t *testing.T) {
 			policy.MustSet(Monthly, 2, 6)
 			policy.MustSet(Yearly, 1, -1)
 
+			// FIXME(monthly-alignment): hash must be regenerated after monthly:N alignment fix
 			return times, policy, "023064a5ac204ebd8db07a8e0f3e7aa6d33fb59c48a6c5728509676c43b7f0fd"
 		},
 		// TODO: more cases

@@ -269,3 +269,30 @@ func ExamplePrune_classification() {
 	// 1: keep=false
 	// 2: keep=true
 }
+
+func TestPruneMonthlyIntervalAlignsToCalendarYear(t *testing.T) {
+	var snapshots []time.Time
+	for i := 0; i < 15; i++ {
+		snapshots = append(snapshots, time.Date(2023, time.January+time.Month(i), 1, 0, 0, 0, 0, time.UTC))
+	}
+	retained := func(policy string) []int {
+		p, err := ParsePolicy(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keep, _ := Prune(snapshots, p, time.UTC)
+		var got []int
+		for i, reasons := range keep {
+			if len(reasons) != 0 {
+				got = append(got, i)
+			}
+		}
+		return got
+	}
+	if got, want := retained("monthly:3"), []int{0, 3, 6, 9, 12}; !slices.Equal(got, want) {
+		t.Fatalf("monthly:3: want %v, got %v", want, got)
+	}
+	if got, want := retained("monthly:12"), retained("yearly"); !slices.Equal(got, want) {
+		t.Fatalf("monthly:12 != yearly: %v vs %v", got, want)
+	}
+}

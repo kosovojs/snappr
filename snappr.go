@@ -388,7 +388,7 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 					int64(t.YearDay())
 			case Monthly:
 				year, month, _ := t.Date()
-				current = (int64(year)*12 + int64(month))
+				current = (int64(year)*12 + int64(month) - 1)
 			case Yearly:
 				current = int64(t.Year())
 			default:
