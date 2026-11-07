@@ -296,3 +296,37 @@ func TestPruneMonthlyIntervalAlignsToCalendarYear(t *testing.T) {
 		t.Fatalf("monthly:12 != yearly: %v vs %v", got, want)
 	}
 }
+
+func TestNeedOmitsSatisfiedPeriodsFromMarshalText(t *testing.T) {
+	snapshots := []time.Time{
+		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC),
+	}
+	policy, err := ParsePolicy("1@last")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, need := Prune(snapshots, policy, time.UTC)
+	if b, _ := need.MarshalText(); len(b) != 0 {
+		t.Fatalf("want empty, got %q", b)
+	}
+	if n := need.Get(Period{Unit: Last, Interval: 1}); n != 0 {
+		t.Fatalf("want 0, got %d", n)
+	}
+}
+
+func TestParsePolicyRejectsSubSecondSecondlyIntervals(t *testing.T) {
+	for _, s := range []string{"secondly:1.5s", "secondly:1999ms"} {
+		if _, err := ParsePolicy(s); err == nil {
+			t.Errorf("%s: expected error", s)
+		}
+	}
+	p, err := ParsePolicy("secondly:2000ms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Get(Period{Unit: Secondly, Interval: 2}) == 0 {
+		t.Fatal("expected secondly:2 to be set")
+	}
+}

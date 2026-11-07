@@ -247,6 +247,9 @@ func ParsePolicy(rule ...string) (Policy, error) {
 			var tmp time.Duration
 			tmp, err = time.ParseDuration(x)
 			vx = int64(tmp / time.Second)
+			if err == nil && tmp%time.Second != 0 {
+				return p, fmt.Errorf("rule %q: interval %q must be a whole number of seconds", s, x)
+			}
 			if err == nil && int64(int(vx)) != vx {
 				err = strconv.ErrRange
 			}
@@ -287,6 +290,9 @@ func (p *Policy) UnmarshalText(b []byte) error {
 func (p Policy) MarshalText() ([]byte, error) {
 	var b []byte
 	p.Each(func(period Period, count int) {
+		if count == 0 {
+			return
+		}
 		if b != nil {
 			b = append(b, ' ')
 		}
@@ -327,7 +333,8 @@ func formatSecondlyInterval(interval int) (text string, isDuration bool) {
 
 // Prune prunes the provided list of snapshots, returning a matching slice of
 // periods requiring that snapshot, and the remaining number of snapshots
-// required to fulfill the original policy.
+// required to fulfill the original policy. The returned policy may contain
+// periods with a zero count (satisfied); MarshalText omits them.
 //
 // All snapshots are placed in the provided timezone, and the monotonic time
 // component is removed. The timezone affects the exact point at which calendar
