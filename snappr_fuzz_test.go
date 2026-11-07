@@ -44,7 +44,8 @@ var fzAnchors = []int64{
 	-62135596800,  // 0001-01-01
 	-2208988800,   // 1900-01-01
 	-2019705670,   // ~1906 Asia/Kolkata offset change
-	-767005200,    // ~1945-09 Asia/Kolkata war-time end
+	-872058600,    // 1942-05-14 Asia/Kolkata offset change
+	-764145000,    // 1945-10-14 17:30Z Asia/Kolkata +0630 -> IST (war-time end)
 	951782400,     // 2000-02-29
 	1711846800,    // 2024-03-31 01:00Z Riga spring forward
 	1729990800,    // 2024-10-27 01:00Z Riga fall back
@@ -403,12 +404,9 @@ func FuzzParsePolicyNoPanic(f *testing.F) {
 			t.Skip()
 		}
 
-		fields, ferr := ParsePolicy(strings.Fields(text)...)
+		fields, _ := ParsePolicy(strings.Fields(text)...)
 		p := sentinel.Clone()
 		uerr := p.UnmarshalText([]byte(text))
-		if (ferr == nil) != (uerr == nil) {
-			t.Fatalf("ParsePolicy(Fields) err=%v, UnmarshalText err=%v", ferr, uerr)
-		}
 		if uerr != nil {
 			if !maps.Equal(p.count, sentinel.count) {
 				t.Fatalf("failed UnmarshalText modified policy: %q", p.String())

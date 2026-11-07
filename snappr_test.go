@@ -457,9 +457,7 @@ func TestPrune(t *testing.T) {
 	}
 }
 
-// TODO: fuzz it (generating a random policy, and a seed for generating 1000
-// random time intervals), checking the guarantees for Prune (and ensuring it
-// works adding the times one at a time).
+// See FuzzPruneRandomPolicy in snappr_fuzz_test.go.
 
 func ExamplePrune() {
 	var times []time.Time
