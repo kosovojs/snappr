@@ -16,7 +16,7 @@ type Unit int
 
 const (
 	Last     Unit = iota // snapshot count
-	Secondly             // wallclock seconds
+	Secondly             // unix seconds (timezone-independent)
 	Daily                // calendar days
 	Monthly              // calendar months
 	Yearly               // calendar years
@@ -107,6 +107,9 @@ func (p Period) Compare(other Period) int {
 // Policy defines a retention policy for snapshots.
 //
 // All periods are valid and normalized.
+//
+// Copying a Policy value shares its underlying state; use Clone for an
+// independent copy.
 type Policy struct {
 	count map[Period]int // Period is normalized and valid
 }
@@ -359,7 +362,7 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 		return
 	}
 
-	// sort the snapshots descending
+	// sort the snapshots ascending
 	sorted := make([]int, len(snapshots))
 	for i := range sorted {
 		sorted[i] = i
@@ -371,6 +374,11 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 		return cmp.Compare(a, b)
 	})
 
+	zoned := make([]time.Time, len(snapshots))
+	for i := range zoned {
+		zoned[i] = snapshots[sorted[i]].In(loc).Truncate(-1)
+	}
+
 	policy.Each(func(period Period, count int) {
 		var (
 			match = make([]bool, len(snapshots))
@@ -380,7 +388,7 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 		// start from the beginning, marking the first one in each period
 		for i := range snapshots {
 			var current int64
-			switch t := snapshots[sorted[i]].In(loc).Truncate(-1); period.Unit {
+			switch t := zoned[i]; period.Unit {
 			case Last:
 				match[i] = true
 				continue
@@ -410,8 +418,7 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 			}
 		}
 		// preserve from the end and stay within the count
-		for i := range match {
-			i = len(match) - 1 - i
+		for i := len(match) - 1; i >= 0; i-- {
 			if count == 0 {
 				break
 			}
