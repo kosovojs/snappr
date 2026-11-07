@@ -1,0 +1,15 @@
+-- args --
+snappr -w daily yearly:2
+-- stdin --
+-63158400
+-31536000
+-86400
+-3600
+0
+-- stdout --
+-3600
+-- stderr --
+snappr: why: keep [1/5] Mon 1968 Jan  1 00:00:00 :: 1 day, 2 year
+snappr: why: keep [2/5] Wed 1969 Jan  1 00:00:00 :: 1 day
+snappr: why: keep [3/5] Wed 1969 Dec 31 00:00:00 :: 1 day
+snappr: why: keep [5/5] Thu 1970 Jan  1 00:00:00 :: 1 day, 2 year
