@@ -1,0 +1,21 @@
+name: fuzz
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go test -run=^$ -fuzz=FuzzParsePolicyRoundTrip -fuzztime=1m .
+      - run: go test -run=^$ -fuzz=FuzzPruneOutputInvariants -fuzztime=1m .
+      - run: go test -run=^$ -fuzz=FuzzMainPartitionsValidGroupedRecords -fuzztime=1m ./cmd/snappr
