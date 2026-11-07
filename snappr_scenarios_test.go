@@ -261,7 +261,7 @@ func TestScenarioCalendarIntervalBoundaries(t *testing.T) {
 		},
 		{
 			// floorDiv: -2->-1, -1->-1, 0->0, 1->0, 2->1. Truncation would put
-			// -1 with 0 and 1 (want {0,1,4}).
+			// -1 with 0 and 1 (truncating division would keep {0,1,4}).
 			name:      "yearly:2 floors negative years",
 			policy:    "yearly:2",
 			snapshots: []time.Time{ymd(-2, 1, 1), ymd(-1, 1, 1), ymd(0, 1, 1), ymd(1, 1, 1), ymd(2, 1, 1)},
@@ -270,7 +270,7 @@ func TestScenarioCalendarIntervalBoundaries(t *testing.T) {
 		{
 			// month index: Dec -2 = -13 (/12 -> -2), Jan -1 = -12 (-1),
 			// Dec -1 = -1 (-1), Jan 0 = 0 (0), Dec 0 = 11 (0), Jan 1 = 12 (1).
-			// Truncation would give -1,-1,0,0,0,1 (want {0,2,5}).
+			// Truncation would give -1,-1,0,0,0,1 (truncating division would keep {0,2,5}).
 			name:      "monthly:12 floors negative years",
 			policy:    "monthly:12",
 			snapshots: []time.Time{ymd(-2, 12, 1), ymd(-1, 1, 1), ymd(-1, 12, 1), ymd(0, 1, 1), ymd(0, 12, 1), ymd(1, 1, 1)},

@@ -1,5 +1,5 @@
 -- args --
-snappr -o last
+snappr -o 1@last
 -- stdin --
 1672531200
 1672617600

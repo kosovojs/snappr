@@ -112,7 +112,7 @@ func TestScenarioWhySummarizeUngrouped(t *testing.T) {
 }
 
 func TestScenarioSummaryPadding(t *testing.T) {
-	// 10@daily makes cdig=2: "( 2) last", "(10) 1 day (missing 8)", "(**) 1 month".
+	// 10@daily makes cdig=2: "( 2) last", "(10) 1 day (missing 9)", "(**) 1 month".
 	// Three snapshots on one day: last keeps idx2,idx1; daily/monthly match only idx0,
 	// so daily need = 10-1 = 9. Everything is retained (pruning 0/3).
 	const input = "0\n1\n2\n"
@@ -235,7 +235,7 @@ func TestScenarioConfigurationErrors(t *testing.T) {
 		{"two captures without -n", []string{"-E", "-e", "(x)(y)", "last"},
 			"snappr: fatal: --extract regexp is invalid: must contain exactly 1 capture group(s)\n", false},
 		{"bad regexp", []string{"-E", "-e", "(", "last"}, "snappr: fatal: --extract regexp is invalid: ", true},
-		{"bad timezone", []string{"-z", "Nowhere/Land", "last"}, "", true},
+		{"bad timezone", []string{"-z", "Nowhere/Land", "last"}, "snappr: fatal: ", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
