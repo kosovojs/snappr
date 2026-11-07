@@ -190,6 +190,21 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	if !*Quiet {
+		for _, w := range []struct {
+			flag, need string
+			bad        bool
+		}{
+			{"only", "extract", opt.Changed("only") && !opt.Changed("extract")},
+			{"extended-regexp", "extract", opt.Changed("extended-regexp") && !opt.Changed("extract")},
+			{"parse-timezone", "parse", opt.Changed("parse-timezone") && !opt.Changed("parse")},
+		} {
+			if w.bad {
+				fmt.Fprintf(stderr, "snappr: warning: --%s has no effect without --%s\n", w.flag, w.need)
+			}
+		}
+	}
+
 	if *ParseIn == nil {
 		*ParseIn = *In
 	}
@@ -383,6 +398,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	printed := make(map[string]bool)
+	w := bufio.NewWriter(stdout)
 	for i, prunable := range discard {
 		if prunable == *Invert {
 			continue
@@ -394,10 +410,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 			printed[key] = true
 		}
-		if _, err := fmt.Fprintln(stdout, lines[i]); err != nil {
+		if _, err := fmt.Fprintln(w, lines[i]); err != nil {
 			fmt.Fprintf(stderr, "snappr: fatal: failed to write stdout: %v\n", err)
 			return 1
 		}
+	}
+	if err := w.Flush(); err != nil {
+		fmt.Fprintf(stderr, "snappr: fatal: failed to write stdout: %v\n", err)
+		return 1
 	}
 	if diagnostics.Len() != 0 {
 		if _, err := io.WriteString(stderr, diagnostics.String()); err != nil {
