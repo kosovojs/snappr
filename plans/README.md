@@ -4,9 +4,9 @@ Operator constraints: no test/CI runs; tests written but not executed; docs/CI o
 
 | # | Plan | Pri | Effort | Depends | Status |
 |---|------|-----|--------|---------|--------|
-| 001 | [CLI: no text on both prune/keep sides, dedupe](001-no-text-in-both-outputs.md) | P1 | M | — | TODO |
-| 002 | [Library correctness bundle (monthly:N, need marshal, sub-second, cleanups)](002-library-correctness-bundle.md) | P1/P3 | S–M | — | TODO |
-| 003 | [CLI robustness bundle (unix lower bound, buffering, flag warnings, help)](003-cli-robustness-bundle.md) | P2 | S | 001 | TODO |
+| 001 | [CLI: no text on both prune/keep sides, dedupe](001-no-text-in-both-outputs.md) | P1 | M | — | DONE |
+| 002 | [Library correctness bundle (monthly:N, need marshal, sub-second, cleanups)](002-library-correctness-bundle.md) | P1/P3 | S–M | — | DONE |
+| 003 | [CLI robustness bundle (unix lower bound, buffering, flag warnings, help)](003-cli-robustness-bundle.md) | P2 | S | 001 | DONE |
 | 004 | [Direction: weekly unit, NUL I/O](004-direction-weekly-and-nul.md) | P3 | M | 001 | NEEDS DECISION |
 
 Order: 001 ∥ 002 (disjoint files) → 003.
