@@ -15,6 +15,10 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// Go time.Time stores seconds relative to year 1 in an int64. Unix seconds
+// above this value overflow that internal representation in time.Unix.
+const maxUnixSecond int64 = (1<<63 - 1) - 62135596800
+
 func main() {
 	if status := Main(os.Args, os.Stdin, os.Stdout, os.Stderr); status != 0 {
 		os.Exit(status)
@@ -42,34 +46,10 @@ func (t *timezoneFlag) String() string {
 	return t.loc.String()
 }
 
-func processSnapshots(name string, times []time.Time, lines []string, policy snappr.Policy, loc *time.Location, invert, why, summarize bool, stdout, stderr io.Writer) {
-	snapshots := make([]time.Time, 0, len(times))
-	snapshotMap := make([]int, 0, len(times))
-	for i, t := range times {
-		if !t.IsZero() {
-			snapshots = append(snapshots, t)
-			snapshotMap = append(snapshotMap, i)
-		}
-	}
-
-	keep, need := snappr.Prune(snapshots, policy, loc)
-
-	discard := make([]bool, len(times))
+func processSnapshots(grouped bool, name string, times []time.Time, recordIndexes []int, discard []bool, policy snappr.Policy, loc *time.Location, why, summarize bool, stderr io.Writer) {
+	keep, need := snappr.Prune(times, policy, loc)
 	for at, reason := range keep {
-		discard[snapshotMap[at]] = len(reason) == 0
-	}
-
-	for i, x := range discard {
-		if invert {
-			if x {
-				continue
-			}
-		} else {
-			if !x {
-				continue
-			}
-		}
-		fmt.Fprintln(stdout, lines[i])
+		discard[recordIndexes[at]] = len(reason) == 0
 	}
 
 	var pruned int
@@ -81,9 +61,15 @@ func processSnapshots(name string, times []time.Time, lines []string, policy sna
 				for i, period := range reason {
 					ps[i] = period.String()
 				}
-				fmt.Fprintf(stderr, "snappr: why: keep [%*d/%*d] %s (%s) :: %s\n",
-					ndig, at+1, ndig, len(keep),
-					snapshots[at].Format("Mon 2006 Jan _2 15:04:05"), name, strings.Join(ps, ", "))
+				if !grouped {
+					fmt.Fprintf(stderr, "snappr: why: keep [%*d/%*d] %s :: %s\n",
+						ndig, at+1, ndig, len(keep),
+						times[at].Format("Mon 2006 Jan _2 15:04:05"), strings.Join(ps, ", "))
+				} else {
+					fmt.Fprintf(stderr, "snappr: why: keep [%*d/%*d] %s (%q) :: %s\n",
+						ndig, at+1, ndig, len(keep),
+						times[at].Format("Mon 2006 Jan _2 15:04:05"), name, strings.Join(ps, ", "))
+				}
 			}
 		} else {
 			pruned++
@@ -97,22 +83,30 @@ func processSnapshots(name string, times []time.Time, lines []string, policy sna
 		})
 		cdig := digits(cmax)
 		need.Each(func(period snappr.Period, count int) {
+			prefix := "snappr: summary:"
+			if grouped {
+				prefix = fmt.Sprintf("snappr: summary (%q):", name)
+			}
 			if count < 0 {
-				fmt.Fprintf(stderr, "snappr: summary (%s): (%s) %s\n", name, strings.Repeat("*", cdig), period)
+				fmt.Fprintf(stderr, "%s (%s) %s\n", prefix, strings.Repeat("*", cdig), period)
 			} else if count == 0 {
-				fmt.Fprintf(stderr, "snappr: summary (%s): (%*d) %s\n", name, cdig, policy.Get(period), period)
+				fmt.Fprintf(stderr, "%s (%*d) %s\n", prefix, cdig, policy.Get(period), period)
 			} else {
-				fmt.Fprintf(stderr, "snappr: summary (%s): (%*d) %s (missing %d)\n", name, cdig, policy.Get(period), period, count)
+				fmt.Fprintf(stderr, "%s (%*d) %s (missing %d)\n", prefix, cdig, policy.Get(period), period, count)
 			}
 		})
-		fmt.Fprintf(stderr, "snappr: summary (%s): pruning %d/%d snapshots\n", name, pruned, len(keep))
+		if !grouped {
+			fmt.Fprintf(stderr, "snappr: summary: pruning %d/%d snapshots\n", pruned, len(keep))
+		} else {
+			fmt.Fprintf(stderr, "snappr: summary (%q): pruning %d/%d snapshots\n", name, pruned, len(keep))
+		}
 	}
 }
 
 func (t *timezoneFlag) Set(s string) error {
 	switch string(s) {
 	case "":
-		t.loc = nil
+		return fmt.Errorf("timezone must not be empty")
 	case "UTC", "utc":
 		t.loc = time.UTC
 	case "Local", "local":
@@ -128,10 +122,13 @@ func (t *timezoneFlag) Set(s string) error {
 }
 
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		args = []string{"snappr"}
+	}
 	opt := pflag.NewFlagSet(args[0], pflag.ContinueOnError)
 	var (
 		Quiet       = opt.BoolP("quiet", "q", false, "do not show warnings about invalid or unmatched input lines")
-		Extract     = opt.StringP("extract", "e", "", "extract the timestamp from each input line using the provided regexp, which must contain up to one capture group")
+		Extract     = opt.StringP("extract", "e", "", "extract the timestamp using a regexp with one capture group, or two with --group-by-name")
 		Extended    = opt.BoolP("extended-regexp", "E", false, "use full regexp syntax rather than POSIX (see pkg.go.dev/regexp/syntax)")
 		Only        = opt.BoolP("only", "o", false, "only print the part of the line matching the regexp")
 		Parse       = opt.StringP("parse", "p", "", "parse the timestamp using the specified Go time format (see pkg.go.dev/time#pkg-constants and the examples below) rather than a unix timestamp")
@@ -140,7 +137,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		Invert      = opt.BoolP("invert", "v", false, "output the snapshots to keep instead of the ones to prune")
 		Why         = opt.BoolP("why", "w", false, "explain why each snapshot is being kept to stderr")
 		Summarize   = opt.BoolP("summarize", "s", false, "summarize retention policy results to stderr")
-		GroupByName = opt.BoolP("group-by-name", "n", false, "group snapshots by extracted name (from the first capture group in --extract)")
+		GroupByName = opt.BoolP("group-by-name", "n", false, "apply the policy independently by name (capture group 1 is the name and capture group 2 is the timestamp)")
 		Help        = opt.BoolP("help", "h", false, "show this help text")
 	)
 	if err := opt.Parse(args[1:]); err != nil {
@@ -149,33 +146,38 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if *Help {
-		fmt.Fprintf(stdout, "usage: %s [options] policy...\n", args[0])
-		fmt.Fprintf(stdout, "\noptions:\n%s", opt.FlagUsages())
-		fmt.Fprintf(stdout, "\ntime format examples:\n")
-		fmt.Fprintf(stdout, "  - Mon Jan 02 15:04:05 2006\n")
-		fmt.Fprintf(stdout, "  - 02 Jan 06 15:04 MST\n")
-		fmt.Fprintf(stdout, "  - 2006-01-02T15:04:05Z07:00\n")
-		fmt.Fprintf(stdout, "  - 2006-01-02T15:04:05\n")
-		fmt.Fprintf(stdout, "\npolicy: N@unit:X\n")
-		fmt.Fprintf(stdout, "  - keep the last N snapshots every X units\n")
-		fmt.Fprintf(stdout, "  - omit the N@ to keep an infinite number of snapshots\n")
-		fmt.Fprintf(stdout, "  - if :X is omitted, it defaults to :1\n")
-		fmt.Fprintf(stdout, "  - there may only be one N specified for each unit:X pair\n")
-		fmt.Fprintf(stdout, "\nunit:\n")
-		fmt.Fprintf(stdout, "  last       snapshot count (X must be 1)\n")
-		fmt.Fprintf(stdout, "  secondly   clock seconds (can also use the format #h#m#s, omitting any zeroed units)\n")
-		fmt.Fprintf(stdout, "  daily      calendar days\n")
-		fmt.Fprintf(stdout, "  monthly    calendar months\n")
-		fmt.Fprintf(stdout, "  yearly     calendar years\n")
-		fmt.Fprintf(stdout, "\nnotes:\n")
-		fmt.Fprintf(stdout, "  - output lines consist of filtered input lines\n")
-		fmt.Fprintf(stdout, "  - input is read from stdin, and should consist of unix timestamps (or more if --extract and/or --parse are set)\n")
-		fmt.Fprintf(stdout, "  - invalid/unmatched input lines are ignored, or passed through if --invert is set (and a warning is printed unless --quiet is set)\n")
-		fmt.Fprintf(stdout, "  - everything will still work correctly even if timezones are different\n")
-		fmt.Fprintf(stdout, "  - snapshots are always ordered by their real (i.e., UTC) time\n")
-		fmt.Fprintf(stdout, "  - if using --parse-in, beware of duplicate timestamps at DST transitions (if the offset isn't included whatever you use as the\n")
-		fmt.Fprintf(stdout, "    snapshot name, and your timezone has DST, you may end up with two snapshots for different times with the same name.\n")
-		fmt.Fprintf(stdout, "  - timezones will only affect the exact point at which calendar days/months/years are split\n")
+		var help strings.Builder
+		fmt.Fprintf(&help, "usage: %s [options] policy...\n", args[0])
+		fmt.Fprintf(&help, "\noptions:\n%s", opt.FlagUsages())
+		fmt.Fprint(&help, "\ntime format examples:\n")
+		fmt.Fprint(&help, "  - Mon Jan 02 15:04:05 2006\n")
+		fmt.Fprint(&help, "  - 02 Jan 06 15:04 MST\n")
+		fmt.Fprint(&help, "  - 2006-01-02T15:04:05Z07:00\n")
+		fmt.Fprint(&help, "  - 2006-01-02T15:04:05\n")
+		fmt.Fprint(&help, "\npolicy: N@unit:X\n")
+		fmt.Fprint(&help, "  - keep the last N snapshots every X units\n")
+		fmt.Fprint(&help, "  - omit the N@ to keep an infinite number of snapshots\n")
+		fmt.Fprint(&help, "  - if :X is omitted, it defaults to :1\n")
+		fmt.Fprint(&help, "  - there may only be one N specified for each unit:X pair\n")
+		fmt.Fprint(&help, "\nunit:\n")
+		fmt.Fprint(&help, "  last       snapshot count (X must be 1)\n")
+		fmt.Fprint(&help, "  secondly   clock seconds (can also use the format #h#m#s, omitting any zeroed units)\n")
+		fmt.Fprint(&help, "  daily      calendar days\n")
+		fmt.Fprint(&help, "  monthly    calendar months\n")
+		fmt.Fprint(&help, "  yearly     calendar years\n")
+		fmt.Fprint(&help, "\nnotes:\n")
+		fmt.Fprint(&help, "  - output lines consist of filtered input lines\n")
+		fmt.Fprint(&help, "  - input is read from stdin, and should consist of unix timestamps (or more if --extract and/or --parse are set)\n")
+		fmt.Fprint(&help, "  - invalid/unmatched input lines are ignored, or passed through if --invert is set (and a warning is printed unless --quiet is set)\n")
+		fmt.Fprint(&help, "  - everything will still work correctly even if timezones are different\n")
+		fmt.Fprint(&help, "  - snapshots are always ordered by their real (i.e., UTC) time\n")
+		fmt.Fprint(&help, "  - if using --parse-in, beware of duplicate timestamps at DST transitions (if the offset isn't included whatever you use as the\n")
+		fmt.Fprint(&help, "    snapshot name, and your timezone has DST, you may end up with two snapshots for different times with the same name.\n")
+		fmt.Fprint(&help, "  - timezones will only affect the exact point at which calendar days/months/years are split\n")
+		if _, err := io.WriteString(stdout, help.String()); err != nil {
+			fmt.Fprintf(stderr, "snappr: fatal: failed to write stdout: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 
@@ -195,6 +197,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	var extract *regexp.Regexp
+	if *GroupByName && *Extract == "" {
+		fmt.Fprintf(stderr, "snappr: fatal: --group-by-name requires --extract\n")
+		return 2
+	}
 	if *Extract != "" {
 		var err error
 		if *Extended {
@@ -202,8 +208,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		} else {
 			extract, err = regexp.CompilePOSIX(*Extract)
 		}
-		if err == nil && extract.NumSubexp() > 2 {
-			err = fmt.Errorf("must contain no more than two capture groups")
+		if err == nil {
+			want := 1
+			if *GroupByName {
+				want = 2
+			}
+			if extract.NumSubexp() != want {
+				err = fmt.Errorf("must contain exactly %d capture group(s)", want)
+			}
 		}
 		if err != nil {
 			fmt.Fprintf(stderr, "snappr: fatal: --extract regexp is invalid: %v\n", err)
@@ -212,14 +224,16 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	type NamedSnapshots struct {
-		Times []time.Time
-		Lines []string
+		Name          string
+		Times         []time.Time
+		RecordIndexes []int
 	}
 
 	var (
-		times   []time.Time
-		lines   []string
-		grouped map[string]*NamedSnapshots
+		lines      []string
+		groups     []*NamedSnapshots
+		grouped    map[string]*NamedSnapshots
+		defaultSet = &NamedSnapshots{}
 	)
 
 	err = func() error {
@@ -229,6 +243,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			if len(line) == 0 {
 				continue
 			}
+			recordIndex := len(lines)
+			lines = append(lines, line)
 
 			var (
 				bad  bool
@@ -241,9 +257,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				name = "default"
 			} else {
 				m := extract.FindStringSubmatch(line)
-				if m == nil || (*GroupByName && len(m) < 3) || (!*GroupByName && len(m) < 2) {
+				if m == nil {
 					if !*Quiet {
-						fmt.Fprintf(stderr, "snappr: warning: failed extract timestamp from %q using regexp %q\n", line, extract.String())
+						if _, err := fmt.Fprintf(stderr, "snappr: warning: failed extract timestamp from %q using regexp %q\n", line, extract.String()); err != nil {
+							return fmt.Errorf("write stderr: %w", err)
+						}
 					}
 					continue
 				}
@@ -255,15 +273,21 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				}
 				if *Only {
 					line = m[0]
+					lines[recordIndex] = line
 				}
 			}
 
 			var t time.Time
 			if *Parse == "" {
 				n, err := strconv.ParseInt(ts, 10, 64)
+				if err == nil && n > maxUnixSecond {
+					err = fmt.Errorf("value is outside the representable time range")
+				}
 				if err != nil {
 					if !*Quiet {
-						fmt.Fprintf(stderr, "snappr: warning: failed to parse unix timestamp %q: %v\n", ts, err)
+						if _, err := fmt.Fprintf(stderr, "snappr: warning: failed to parse unix timestamp %q: %v\n", ts, err); err != nil {
+							return fmt.Errorf("write stderr: %w", err)
+						}
 					}
 					bad = true
 				} else {
@@ -273,12 +297,17 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				v, err := time.ParseInLocation(*Parse, ts, *ParseIn)
 				if err != nil {
 					if !*Quiet {
-						fmt.Fprintf(stderr, "snappr: warning: failed to parse timestamp %q using layout %q: %v\n", ts, *Parse, err)
+						if _, err := fmt.Fprintf(stderr, "snappr: warning: failed to parse timestamp %q using layout %q: %v\n", ts, *Parse, err); err != nil {
+							return fmt.Errorf("write stderr: %w", err)
+						}
 					}
 					bad = true
 				} else {
 					t = v
 				}
+			}
+			if bad {
+				continue
 			}
 			t = t.In(*In)
 
@@ -287,21 +316,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 					grouped = make(map[string]*NamedSnapshots)
 				}
 				if _, ok := grouped[name]; !ok {
-					grouped[name] = &NamedSnapshots{}
+					grouped[name] = &NamedSnapshots{Name: name}
+					groups = append(groups, grouped[name])
 				}
-				grouped[name].Lines = append(grouped[name].Lines, line)
-				if bad {
-					grouped[name].Times = append(grouped[name].Times, time.Time{})
-				} else {
-					grouped[name].Times = append(grouped[name].Times, t)
-				}
+				grouped[name].Times = append(grouped[name].Times, t)
+				grouped[name].RecordIndexes = append(grouped[name].RecordIndexes, recordIndex)
 			} else {
-				lines = append(lines, line)
-				if bad {
-					times = append(times, time.Time{})
-				} else {
-					times = append(times, t)
-				}
+				defaultSet.Times = append(defaultSet.Times, t)
+				defaultSet.RecordIndexes = append(defaultSet.RecordIndexes, recordIndex)
 			}
 		}
 		return sc.Err()
@@ -312,12 +334,28 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if *GroupByName {
-		for name, snap := range grouped {
-			processSnapshots(name, snap.Times, snap.Lines, policy, *In, *Invert, *Why, *Summarize, stdout, stderr)
+	if !*GroupByName {
+		groups = append(groups, defaultSet)
+	}
+	discard := make([]bool, len(lines))
+	var diagnostics strings.Builder
+	for _, group := range groups {
+		processSnapshots(*GroupByName, group.Name, group.Times, group.RecordIndexes, discard, policy, *In, *Why, *Summarize, &diagnostics)
+	}
+
+	for i, prunable := range discard {
+		if prunable == *Invert {
+			continue
 		}
-	} else {
-		processSnapshots("default", times, lines, policy, *In, *Invert, *Why, *Summarize, stdout, stderr)
+		if _, err := fmt.Fprintln(stdout, lines[i]); err != nil {
+			fmt.Fprintf(stderr, "snappr: fatal: failed to write stdout: %v\n", err)
+			return 1
+		}
+	}
+	if diagnostics.Len() != 0 {
+		if _, err := io.WriteString(stderr, diagnostics.String()); err != nil {
+			return 1
+		}
 	}
 
 	return 0

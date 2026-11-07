@@ -58,12 +58,13 @@ $ btrfs subvol list -r /mnt/bkp/ |
 #### CLI Usage
 
 ```
-usage: /tmp/go-build2822248938/b001/exe/snappr [options] policy...
+usage: snappr [options] policy...
 
 options:
   -E, --extended-regexp     use full regexp syntax rather than POSIX (see pkg.go.dev/regexp/syntax)
-  -e, --extract string      extract the timestamp from each input line using the provided regexp, which must contain up to one capture group
+  -e, --extract string      extract the timestamp from each input line using a regexp with one capture group, or two with --group-by-name
   -h, --help                show this help text
+  -n, --group-by-name       apply the policy independently by name (capture group 1 is the name and capture group 2 is the timestamp)
   -v, --invert              output the snapshots to keep instead of the ones to prune
   -o, --only                only print the part of the line matching the regexp
   -p, --parse string        parse the timestamp using the specified Go time format (see pkg.go.dev/time#pkg-constants and the examples below) rather than a unix timestamp
@@ -119,10 +120,18 @@ policy.MustSet(snappr.Daily, 1, 7)
 policy.MustSet(snappr.Secondly, int(time.Hour/time.Second), 6)
 policy.MustSet(snappr.Last, 1, 3)
 
-keep, need := snappr.Prune(times, policy)
+keep, need := snappr.Prune(times, policy, time.UTC)
 for at, reason := range keep {
     if len(reason) == 0 {
         // delete the snapshot times[at]
     }
 }
 ```
+
+#### Production safety
+
+Snappr only classifies records; it never deletes snapshots or interprets records as filenames. Default output is the prune-candidate set, while `--invert` outputs the retain set. Invalid or unmatched non-empty records are excluded from prune output and passed through in retain output. With `--only`, every regexp-matched record is projected to the complete match even if its timestamp is invalid; unmatched records remain unchanged.
+
+When a downstream command is destructive, stage Snappr's complete output first and check its exit status before invoking that command. A live `snappr | delete-command` pipeline is not transactional: a consumer can act on early records before a later read or write failure is known.
+
+Snappr buffers the complete input before producing classification output. Bound the input size externally when the producer is untrusted or potentially unbounded.
