@@ -130,7 +130,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	opt := pflag.NewFlagSet(args[0], pflag.ContinueOnError)
 	var (
-		Quiet       = opt.BoolP("quiet", "q", false, "do not show warnings about invalid or unmatched input lines")
+		Quiet       = opt.BoolP("quiet", "q", false, "do not show warnings")
 		Extract     = opt.StringP("extract", "e", "", "extract the timestamp using a regexp with one capture group, or two with --group-by-name")
 		Extended    = opt.BoolP("extended-regexp", "E", false, "use full regexp syntax rather than POSIX (see pkg.go.dev/regexp/syntax)")
 		Only        = opt.BoolP("only", "o", false, "only print the part of the line matching the regexp")
@@ -160,6 +160,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(&help, "\npolicy: N@unit:X\n")
 		fmt.Fprint(&help, "  - keep the last N snapshots every X units\n")
 		fmt.Fprint(&help, "  - omit the N@ to keep an infinite number of snapshots\n")
+		fmt.Fprint(&help, "  - a negative N also keeps an infinite number (pass -- before such policies, e.g. -- -1@daily)\n")
 		fmt.Fprint(&help, "  - if :X is omitted, it defaults to :1\n")
 		fmt.Fprint(&help, "  - there may only be one N specified for each unit:X pair\n")
 		fmt.Fprint(&help, "\nunit:\n")
@@ -174,7 +175,6 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(&help, "  - invalid/unmatched input lines are ignored, or passed through if --invert is set (and a warning is printed unless --quiet is set)\n")
 		fmt.Fprint(&help, "  - everything will still work correctly even if timezones are different\n")
 		fmt.Fprint(&help, "  - snapshots are always ordered by their real (i.e., UTC) time\n")
-		fmt.Fprint(&help, "  - use -- before policies with a negative N (e.g. -- -1@daily), or omit N@ instead\n")
 		fmt.Fprint(&help, "  - if using --parse-timezone, beware of duplicate timestamps at DST transitions (if the offset isn't included whatever you use as the\n")
 		fmt.Fprint(&help, "    snapshot name, and your timezone has DST, you may end up with two snapshots for different times with the same name)\n")
 		fmt.Fprint(&help, "  - timezones will only affect the exact point at which calendar days/months/years are split\n")
@@ -195,12 +195,15 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			flag, need string
 			bad        bool
 		}{
-			{"only", "extract", opt.Changed("only") && !opt.Changed("extract")},
-			{"extended-regexp", "extract", opt.Changed("extended-regexp") && !opt.Changed("extract")},
-			{"parse-timezone", "parse", opt.Changed("parse-timezone") && !opt.Changed("parse")},
+			{"only", "extract", *Only && *Extract == ""},
+			{"extended-regexp", "extract", *Extended && *Extract == ""},
+			{"parse-timezone", "parse", opt.Changed("parse-timezone") && *Parse == ""},
 		} {
 			if w.bad {
-				fmt.Fprintf(stderr, "snappr: warning: --%s has no effect without --%s\n", w.flag, w.need)
+				if _, err := fmt.Fprintf(stderr, "snappr: warning: --%s has no effect without --%s\n", w.flag, w.need); err != nil {
+					fmt.Fprintf(stderr, "snappr: fatal: failed to write stderr: %v\n", err)
+					return 1
+				}
 			}
 		}
 	}
@@ -281,7 +284,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				if m == nil {
 					if !*Quiet {
 						if _, err := fmt.Fprintf(stderr, "snappr: warning: failed extract timestamp from %q using regexp %q\n", line, extract.String()); err != nil {
-							return fmt.Errorf("write stderr: %w", err)
+							return fmt.Errorf("failed to write stderr: %w", err)
 						}
 					}
 					continue
@@ -307,7 +310,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				if err != nil {
 					if !*Quiet {
 						if _, err := fmt.Fprintf(stderr, "snappr: warning: failed to parse unix timestamp %q: %v\n", ts, err); err != nil {
-							return fmt.Errorf("write stderr: %w", err)
+							return fmt.Errorf("failed to write stderr: %w", err)
 						}
 					}
 					bad = true
@@ -319,7 +322,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				if err != nil {
 					if !*Quiet {
 						if _, err := fmt.Fprintf(stderr, "snappr: warning: failed to parse timestamp %q using layout %q: %v\n", ts, *Parse, err); err != nil {
-							return fmt.Errorf("write stderr: %w", err)
+							return fmt.Errorf("failed to write stderr: %w", err)
 						}
 					}
 					bad = true
@@ -348,7 +351,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 		}
 		if err := sc.Err(); err != nil {
-			return fmt.Errorf("read stdin: %w", err)
+			return fmt.Errorf("failed to read stdin: %w", err)
 		}
 		return nil
 	}()
@@ -398,7 +401,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	printed := make(map[string]bool)
-	w := bufio.NewWriter(stdout)
+	var out strings.Builder
 	for i, prunable := range discard {
 		if prunable == *Invert {
 			continue
@@ -410,12 +413,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 			printed[key] = true
 		}
-		if _, err := fmt.Fprintln(w, lines[i]); err != nil {
-			fmt.Fprintf(stderr, "snappr: fatal: failed to write stdout: %v\n", err)
-			return 1
-		}
+		out.WriteString(lines[i])
+		out.WriteByte('\n')
 	}
-	if err := w.Flush(); err != nil {
+	if _, err := io.WriteString(stdout, out.String()); err != nil {
 		fmt.Fprintf(stderr, "snappr: fatal: failed to write stdout: %v\n", err)
 		return 1
 	}

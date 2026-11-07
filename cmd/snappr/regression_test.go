@@ -323,10 +323,10 @@ func TestOnlyMatchCollisionIsNotPruned(t *testing.T) {
 }
 
 func TestIdenticalTextWarningIsEmittedOncePerText(t *testing.T) {
-	const input = "100\n100\n200\n"
+	const input = "100\n100\n100\n200\n"
 
 	_, _, stderr := runMain([]string{"snappr", "-w", "-s", "daily"}, input)
-	for _, want := range []string{":: identical to a retained record", "pruning 1/3 snapshots"} {
+	for _, want := range []string{":: identical to a retained record", "pruning 1/4 snapshots"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("missing %q: stderr=%q", want, stderr)
 		}
@@ -416,5 +416,21 @@ func TestPruneAndKeepOutputsNeverShareText(t *testing.T) {
 		if !maps.Equal(union, want) {
 			t.Fatalf("%v: distinct output texts differ:\nwant=%v\n got=%v", tc.args, want, union)
 		}
+	}
+}
+
+func TestIgnoredFlagWarning(t *testing.T) {
+	const want = "--only has no effect"
+	_, _, stderr := runMain([]string{"snappr", "-o", "last"}, "0\n")
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("missing %q: stderr=%q", want, stderr)
+	}
+	_, _, stderr = runMain([]string{"snappr", "-q", "-o", "last"}, "0\n")
+	if strings.Contains(stderr, want) {
+		t.Fatalf("--quiet did not suppress warning: stderr=%q", stderr)
+	}
+	_, _, stderr = runMain([]string{"snappr", "-e", "(.*)", "-o", "last"}, "0\n")
+	if strings.Contains(stderr, want) {
+		t.Fatalf("unexpected warning: stderr=%q", stderr)
 	}
 }
