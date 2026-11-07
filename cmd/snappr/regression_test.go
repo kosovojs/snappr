@@ -168,10 +168,24 @@ func TestUnrepresentableUnixSecondsStayOnTheSafeSide(t *testing.T) {
 }
 
 func TestRepresentableUnixSecondBoundariesAreClassified(t *testing.T) {
-	const input = "-9223372036854775808\n0\n9223371974719179007\n"
+	const input = "-9223371974719179007\n0\n9223371974719179007\n"
 	status, prune, _ := runMain([]string{"snappr", "1@last"}, input)
-	if status != 0 || prune != "-9223372036854775808\n0\n" {
+	if status != 0 || prune != "-9223371974719179007\n0\n" {
 		t.Fatalf("representable boundary classification failed: status=%d stdout=%q", status, prune)
+	}
+}
+
+func TestVeryNegativeUnixSecondsStayOnTheSafeSide(t *testing.T) {
+	const input = "-9223372036854775808\n0\n"
+
+	status, prune, _ := runMain([]string{"snappr", "1@last"}, input)
+	if status != 0 || prune != "" {
+		t.Fatalf("unrepresentable time entered prune output: status=%d stdout=%q", status, prune)
+	}
+
+	status, keep, _ := runMain([]string{"snappr", "--invert", "1@last"}, input)
+	if status != 0 || keep != input {
+		t.Fatalf("safe-side records changed: status=%d want=%q got=%q", status, input, keep)
 	}
 }
 

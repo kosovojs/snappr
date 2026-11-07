@@ -16,8 +16,12 @@ import (
 )
 
 // Go time.Time stores seconds relative to year 1 in an int64. Unix seconds
-// above this value overflow that internal representation in time.Unix.
-const maxUnixSecond int64 = (1<<63 - 1) - 62135596800
+// above this value overflow that internal representation in time.Unix, and
+// the symmetric lower bound keeps calendar math from wrapping.
+const (
+	maxUnixSecond int64 = (1<<63 - 1) - 62135596800
+	minUnixSecond       = -maxUnixSecond
+)
 
 func main() {
 	if status := Main(os.Args, os.Stdin, os.Stdout, os.Stderr); status != 0 {
@@ -103,7 +107,7 @@ func explainSnapshots(grouped bool, name string, times []time.Time, recordIndexe
 }
 
 func (t *timezoneFlag) Set(s string) error {
-	switch string(s) {
+	switch s {
 	case "":
 		return fmt.Errorf("timezone must not be empty")
 	case "UTC", "utc":
@@ -170,8 +174,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(&help, "  - invalid/unmatched input lines are ignored, or passed through if --invert is set (and a warning is printed unless --quiet is set)\n")
 		fmt.Fprint(&help, "  - everything will still work correctly even if timezones are different\n")
 		fmt.Fprint(&help, "  - snapshots are always ordered by their real (i.e., UTC) time\n")
-		fmt.Fprint(&help, "  - if using --parse-in, beware of duplicate timestamps at DST transitions (if the offset isn't included whatever you use as the\n")
-		fmt.Fprint(&help, "    snapshot name, and your timezone has DST, you may end up with two snapshots for different times with the same name.\n")
+		fmt.Fprint(&help, "  - use -- before policies with a negative N (e.g. -- -1@daily), or omit N@ instead\n")
+		fmt.Fprint(&help, "  - if using --parse-timezone, beware of duplicate timestamps at DST transitions (if the offset isn't included whatever you use as the\n")
+		fmt.Fprint(&help, "    snapshot name, and your timezone has DST, you may end up with two snapshots for different times with the same name)\n")
 		fmt.Fprint(&help, "  - timezones will only affect the exact point at which calendar days/months/years are split\n")
 		if _, err := io.WriteString(stdout, help.String()); err != nil {
 			fmt.Fprintf(stderr, "snappr: fatal: failed to write stdout: %v\n", err)
@@ -281,7 +286,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			var t time.Time
 			if *Parse == "" {
 				n, err := strconv.ParseInt(ts, 10, 64)
-				if err == nil && n > maxUnixSecond {
+				if err == nil && (n > maxUnixSecond || n < minUnixSecond) {
 					err = fmt.Errorf("value is outside the representable time range")
 				}
 				if err != nil {
@@ -327,11 +332,13 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				defaultSet.RecordIndexes = append(defaultSet.RecordIndexes, recordIndex)
 			}
 		}
-		return sc.Err()
-
+		if err := sc.Err(); err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+		return nil
 	}()
 	if err != nil {
-		fmt.Fprintf(stderr, "snappr: fatal: failed to read stdin: %v\n", err)
+		fmt.Fprintf(stderr, "snappr: fatal: %v\n", err)
 		return 1
 	}
 
