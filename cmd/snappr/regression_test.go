@@ -273,3 +273,78 @@ func FuzzMainPartitionsValidGroupedRecords(f *testing.F) {
 		}
 	})
 }
+
+func TestIdenticalTextNeverOnBothSides(t *testing.T) {
+	args := []string{"snappr", "daily"}
+	input := "100\n100\n200\n"
+
+	status, prune, stderr := runMain(args, input)
+	if status != 0 || prune != "200\n" {
+		t.Fatalf("prune result: status=%d stdout=%q", status, prune)
+	}
+	if !strings.Contains(stderr, `snappr: warning: not pruning "100": identical to a retained record`) {
+		t.Fatalf("missing warning: stderr=%q", stderr)
+	}
+
+	status, keep, _ := runMain([]string{"snappr", "--invert", "daily"}, input)
+	if status != 0 || keep != "100\n100\n" {
+		t.Fatalf("keep result: status=%d stdout=%q", status, keep)
+	}
+}
+
+func TestOnlyMatchCollisionIsNotPruned(t *testing.T) {
+	args := []string{"snappr", "-E", "-o", "-e", `@([0-9]+)$`, "daily"}
+	input := "tank/a@1700000000\ntank/b@1700000000\n"
+
+	status, prune, _ := runMain(args, input)
+	if status != 0 || prune != "" {
+		t.Fatalf("prune result: status=%d stdout=%q", status, prune)
+	}
+
+	args = append(args[:1:1], append([]string{"--invert"}, args[1:]...)...)
+	status, keep, _ := runMain(args, input)
+	if status != 0 || !strings.Contains(keep, "@1700000000\n") {
+		t.Fatalf("keep result: status=%d stdout=%q", status, keep)
+	}
+}
+
+func TestPruneOutputIsDeduplicated(t *testing.T) {
+	args := []string{"snappr", "-E", "-o", "-e", `^x ([0-9]+)$`, "1@last"}
+	status, prune, _ := runMain(args, "x 100\nx 100\nx 200\n")
+	if status != 0 || prune != "x 100\n" {
+		t.Fatalf("prune result: status=%d stdout=%q", status, prune)
+	}
+}
+
+func TestPruneAndKeepOutputsNeverShareText(t *testing.T) {
+	for _, tc := range []struct {
+		args  []string
+		input string
+	}{
+		{[]string{"snappr", "1@last"}, "100\n100\n100\n"},
+		{[]string{"snappr", "daily"}, "100\n200\n100\n86400\n100\n"},
+		{[]string{"snappr", "2@secondly"}, "1\n2\n3\n1\n3\nbad\n"},
+		{[]string{"snappr", "-E", "-o", "-e", `@([0-9]+)$`, "1@last"}, "a@5\nb@5\nc@6\nd@4\n"},
+		{[]string{"snappr", "-E", "-n", "-o", "-e", `^([a-z]+)@([0-9]+)$`, "1@last"}, "a@1\nb@1\na@2\nb@1\n"},
+		{[]string{"snappr", "-E", "-n", "-e", `^([a-z]+) .*@([0-9]+)$`, "1@last"}, "a x@1\nb x@1\na x@2\nb x@1\n"},
+	} {
+		status, prune, _ := runMain(tc.args, tc.input)
+		if status != 0 {
+			t.Fatalf("%v: prune status=%d", tc.args, status)
+		}
+		keepArgs := append(tc.args[:1:1], append([]string{"--invert"}, tc.args[1:]...)...)
+		status, keep, _ := runMain(keepArgs, tc.input)
+		if status != 0 {
+			t.Fatalf("%v: keep status=%d", tc.args, status)
+		}
+		kept := make(map[string]bool)
+		for _, line := range strings.Split(keep, "\n") {
+			kept[line] = line != ""
+		}
+		for _, line := range strings.Split(prune, "\n") {
+			if kept[line] {
+				t.Fatalf("%v: %q is in both outputs:\nprune=%q\nkeep=%q", tc.args, line, prune, keep)
+			}
+		}
+	}
+}

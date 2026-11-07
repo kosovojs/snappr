@@ -46,29 +46,28 @@ func (t *timezoneFlag) String() string {
 	return t.loc.String()
 }
 
-func processSnapshots(grouped bool, name string, times []time.Time, recordIndexes []int, discard []bool, policy snappr.Policy, loc *time.Location, why, summarize bool, stderr io.Writer) {
-	keep, need := snappr.Prune(times, policy, loc)
-	for at, reason := range keep {
-		discard[recordIndexes[at]] = len(reason) == 0
-	}
-
+func explainSnapshots(grouped bool, name string, times []time.Time, recordIndexes []int, keep [][]snappr.Period, need snappr.Policy, discard []bool, policy snappr.Policy, why, summarize bool, stderr io.Writer) {
 	var pruned int
 	ndig := digits(len(keep))
 	for at, reason := range keep {
-		if len(reason) > 0 {
+		if !discard[recordIndexes[at]] {
 			if why {
 				ps := make([]string, len(reason))
 				for i, period := range reason {
 					ps[i] = period.String()
 				}
+				explanation := strings.Join(ps, ", ")
+				if len(reason) == 0 {
+					explanation = "identical to a retained record"
+				}
 				if !grouped {
 					fmt.Fprintf(stderr, "snappr: why: keep [%*d/%*d] %s :: %s\n",
 						ndig, at+1, ndig, len(keep),
-						times[at].Format("Mon 2006 Jan _2 15:04:05"), strings.Join(ps, ", "))
+						times[at].Format("Mon 2006 Jan _2 15:04:05"), explanation)
 				} else {
 					fmt.Fprintf(stderr, "snappr: why: keep [%*d/%*d] %s (%q) :: %s\n",
 						ndig, at+1, ndig, len(keep),
-						times[at].Format("Mon 2006 Jan _2 15:04:05"), name, strings.Join(ps, ", "))
+						times[at].Format("Mon 2006 Jan _2 15:04:05"), name, explanation)
 				}
 			}
 		} else {
@@ -227,6 +226,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		Name          string
 		Times         []time.Time
 		RecordIndexes []int
+		Keep          [][]snappr.Period
+		Need          snappr.Policy
 	}
 
 	var (
@@ -338,14 +339,48 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		groups = append(groups, defaultSet)
 	}
 	discard := make([]bool, len(lines))
-	var diagnostics strings.Builder
 	for _, group := range groups {
-		processSnapshots(*GroupByName, group.Name, group.Times, group.RecordIndexes, discard, policy, *In, *Why, *Summarize, &diagnostics)
+		group.Keep, group.Need = snappr.Prune(group.Times, policy, *In)
+		for at, reason := range group.Keep {
+			discard[group.RecordIndexes[at]] = len(reason) == 0
+		}
 	}
 
+	// never prune a record whose output text is identical to a retained one,
+	// since the output is usually fed to a delete command by name
+	retained := make(map[string]bool)
+	for i, prunable := range discard {
+		if !prunable {
+			retained[lines[i]] = true
+		}
+	}
+	for i, prunable := range discard {
+		if prunable && retained[lines[i]] {
+			discard[i] = false
+			if !*Quiet {
+				if _, err := fmt.Fprintf(stderr, "snappr: warning: not pruning %q: identical to a retained record\n", lines[i]); err != nil {
+					fmt.Fprintf(stderr, "snappr: fatal: failed to write stderr: %v\n", err)
+					return 1
+				}
+			}
+		}
+	}
+
+	var diagnostics strings.Builder
+	for _, group := range groups {
+		explainSnapshots(*GroupByName, group.Name, group.Times, group.RecordIndexes, group.Keep, group.Need, discard, policy, *Why, *Summarize, &diagnostics)
+	}
+
+	printed := make(map[string]bool)
 	for i, prunable := range discard {
 		if prunable == *Invert {
 			continue
+		}
+		if prunable {
+			if printed[lines[i]] {
+				continue
+			}
+			printed[lines[i]] = true
 		}
 		if _, err := fmt.Fprintln(stdout, lines[i]); err != nil {
 			fmt.Fprintf(stderr, "snappr: fatal: failed to write stdout: %v\n", err)
