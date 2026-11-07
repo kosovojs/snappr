@@ -330,3 +330,30 @@ func TestParsePolicyRejectsSubSecondSecondlyIntervals(t *testing.T) {
 		t.Fatal("expected secondly:2 to be set")
 	}
 }
+
+// Sorting must use wall-clock instants. time.Time.Compare uses monotonic
+// readings when both sides have one, so after a wall-clock jump (NTP, manual
+// set) the monotonic order can disagree with the wall order that bucketing uses.
+// Monotonic readings can't be faked, so check Prune ignores them.
+func TestPruneIgnoresMonotonicReadings(t *testing.T) {
+	now := time.Now()
+	policy, err := ParsePolicy("3@secondly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, offsets := range [][]time.Duration{
+		{0, time.Second, 2 * time.Second, 3 * time.Second},
+		{3 * time.Second, 2 * time.Second, time.Second, 0},
+	} {
+		var mono, wall []time.Time
+		for _, d := range offsets {
+			mono = append(mono, now.Add(d))
+			wall = append(wall, now.Add(d).Truncate(-1))
+		}
+		got, _ := Prune(mono, policy, time.UTC)
+		want, _ := Prune(wall, policy, time.UTC)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("offsets %v:\nwant: %#v\n got: %#v", offsets, want, got)
+		}
+	}
+}

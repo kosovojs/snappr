@@ -368,7 +368,8 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 		sorted[i] = i
 	}
 	slices.SortFunc(sorted, func(a, b int) int {
-		if order := snapshots[a].Compare(snapshots[b]); order != 0 {
+		// strip monotonic readings: bucketing uses wall-clock, so must the sort
+		if order := snapshots[a].Truncate(-1).Compare(snapshots[b].Truncate(-1)); order != 0 {
 			return order
 		}
 		return cmp.Compare(a, b)
