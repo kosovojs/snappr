@@ -396,7 +396,7 @@ func TestPrune(t *testing.T) {
 			policy.MustSet(Monthly, 2, 6)
 			policy.MustSet(Yearly, 1, -1)
 
-			return times, policy, "1c5391563aef1a2ae123b3a099c00b7635752e64f7a259e4ca4cf32e600e7395"
+			return times, policy, "023064a5ac204ebd8db07a8e0f3e7aa6d33fb59c48a6c5728509676c43b7f0fd"
 		},
 		// TODO: more cases
 	} {
@@ -541,7 +541,7 @@ func mapKeysSorted[M ~map[K]V, K comparable, V any](m M, compare func(K, K) int)
 	if m == nil {
 		return nil
 	}
-	ks := make([]K, len(m))
+	ks := make([]K, 0, len(m))
 	for k := range m {
 		ks = append(ks, k)
 	}

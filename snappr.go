@@ -82,12 +82,9 @@ func (p Period) String() string {
 	case Last:
 		return p.Unit.String()
 	case Secondly:
-		s := (time.Second * time.Duration(p.Interval)).String()
-		if v, ok := strings.CutSuffix(s, "m0s"); ok {
-			s = v + "m"
-		}
-		if v, ok := strings.CutSuffix(s, "h0m"); ok {
-			s = v + "h"
+		s, isDuration := formatSecondlyInterval(p.Interval)
+		if !isDuration {
+			s += "s"
 		}
 		return s + " time"
 	default:
@@ -237,7 +234,7 @@ func ParsePolicy(rule ...string) (Policy, error) {
 			return p, fmt.Errorf("rule %q: unknown unit %q", s, u)
 		}
 
-		vn, err := strconv.ParseInt(n, 10, 64)
+		vn, err := strconv.ParseInt(n, 10, strconv.IntSize)
 		if err != nil {
 			return p, fmt.Errorf("rule %q: parse count %q: %w", s, n, err)
 		}
@@ -245,11 +242,14 @@ func ParsePolicy(rule ...string) (Policy, error) {
 			return p, fmt.Errorf("rule %q: count must not be zero", s)
 		}
 
-		vx, err := strconv.ParseInt(x, 10, 64)
+		vx, err := strconv.ParseInt(x, 10, strconv.IntSize)
 		if vu == Secondly && err != nil {
 			var tmp time.Duration
 			tmp, err = time.ParseDuration(x)
 			vx = int64(tmp / time.Second)
+			if err == nil && int64(int(vx)) != vx {
+				err = strconv.ErrRange
+			}
 		}
 		if err != nil {
 			return p, fmt.Errorf("rule %q: parse interval %q: %w", s, x, err)
@@ -298,13 +298,7 @@ func (p Policy) MarshalText() ([]byte, error) {
 		if period.Interval != 1 {
 			b = append(b, ':')
 			if period.Unit == Secondly && period.Interval >= 60 {
-				s := (time.Second * time.Duration(period.Interval)).String()
-				if v, ok := strings.CutSuffix(s, "m0s"); ok {
-					s = v + "m"
-				}
-				if v, ok := strings.CutSuffix(s, "h0m"); ok {
-					s = v + "h"
-				}
+				s, _ := formatSecondlyInterval(period.Interval)
 				b = append(b, s...)
 			} else {
 				b = strconv.AppendInt(b, int64(period.Interval), 10)
@@ -312,6 +306,23 @@ func (p Policy) MarshalText() ([]byte, error) {
 		}
 	})
 	return b, nil
+}
+
+const maxDurationSeconds = int64((1<<63 - 1) / time.Second)
+
+func formatSecondlyInterval(interval int) (text string, isDuration bool) {
+	if int64(interval) > maxDurationSeconds {
+		return strconv.Itoa(interval), false
+	}
+
+	text = (time.Second * time.Duration(interval)).String()
+	if v, ok := strings.CutSuffix(text, "m0s"); ok {
+		text = v + "m"
+	}
+	if v, ok := strings.CutSuffix(text, "h0m"); ok {
+		text = v + "h"
+	}
+	return text, true
 }
 
 // Prune prunes the provided list of snapshots, returning a matching slice of
@@ -325,11 +336,17 @@ func (p Policy) MarshalText() ([]byte, error) {
 // name, and your timezone has DST, you may end up with two snapshots for
 // different times with the same name).
 //
+// A nil location is treated as UTC. Equal timestamps are ordered by their input
+// position, with later input positions considered newer for Last rules.
+//
 // See pruneCorrectness in snappr_test.go for some additional notes about
 // guarantees provided by Prune.
 func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]Period, need Policy) {
 	need = policy.Clone()
 	keep = make([][]Period, len(snapshots))
+	if loc == nil {
+		loc = time.UTC
+	}
 
 	if len(snapshots) == 0 {
 		return
@@ -341,7 +358,10 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 		sorted[i] = i
 	}
 	slices.SortFunc(sorted, func(a, b int) int {
-		return snapshots[a].Compare(snapshots[b])
+		if order := snapshots[a].Compare(snapshots[b]); order != 0 {
+			return order
+		}
+		return cmp.Compare(a, b)
 	})
 
 	policy.Each(func(period Period, count int) {
@@ -360,21 +380,12 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 			case Secondly:
 				current = t.Unix()
 			case Daily:
-				n, x := t.Year(), 0
-
-				x = n / 400
-				current += int64(x * (365*400 + 97)) // days per 400 years
-				n -= x * 400
-
-				x = n / 100
-				current += int64(x * (365*100 + 24)) // days per 100 years
-				n -= x * 100
-
-				x = n / 4
-				current += int64(x * (365*4 + 1)) // days per 4 years
-				n -= x * 4
-
-				current += int64(x) + int64(t.YearDay())
+				year := int64(t.Year())
+				current = year*365 +
+					floorDiv(year+3, 4) -
+					floorDiv(year+99, 100) +
+					floorDiv(year+399, 400) +
+					int64(t.YearDay())
 			case Monthly:
 				year, month, _ := t.Date()
 				current = (int64(year)*12 + int64(month))
@@ -383,7 +394,7 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 			default:
 				panic("wtf")
 			}
-			current /= int64(period.Interval)
+			current = floorDiv(current, int64(period.Interval))
 
 			if !prev || current != last {
 				match[i] = true
@@ -408,4 +419,12 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 		need.count[period] = count
 	})
 	return
+}
+
+func floorDiv(n, d int64) int64 {
+	q := n / d
+	if n < 0 && n%d != 0 {
+		q--
+	}
+	return q
 }
