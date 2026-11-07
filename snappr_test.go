@@ -494,6 +494,7 @@ func ExamplePrune() {
 	}
 	fmt.Println(need)
 
+	// FIXME(monthly-alignment): Output block must be regenerated after monthly:N alignment fix
 	// Output:
 	// last (3), 1h time (6), 1 day (7), 2 month (6), 6 month (4), 1 year (3), 2 year (10), 5 year (inf)
 	// Fri Dec 31 23:55:29 1999 | 2 year, 5 year

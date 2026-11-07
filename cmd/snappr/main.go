@@ -348,16 +348,20 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	// never prune a record whose output text is identical to a retained one,
 	// since the output is usually fed to a delete command by name
+	// (keyed on the trimmed text, since xargs-style consumers split on whitespace)
 	retained := make(map[string]bool)
 	for i, prunable := range discard {
 		if !prunable {
-			retained[lines[i]] = true
+			retained[strings.TrimSpace(lines[i])] = true
 		}
 	}
+	warned := make(map[string]bool)
 	for i, prunable := range discard {
-		if prunable && retained[lines[i]] {
+		key := strings.TrimSpace(lines[i])
+		if prunable && retained[key] {
 			discard[i] = false
-			if !*Quiet {
+			if !*Quiet && !warned[key] {
+				warned[key] = true
 				if _, err := fmt.Fprintf(stderr, "snappr: warning: not pruning %q: identical to a retained record\n", lines[i]); err != nil {
 					fmt.Fprintf(stderr, "snappr: fatal: failed to write stderr: %v\n", err)
 					return 1
@@ -377,10 +381,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			continue
 		}
 		if prunable {
-			if printed[lines[i]] {
+			key := strings.TrimSpace(lines[i])
+			if printed[key] {
 				continue
 			}
-			printed[lines[i]] = true
+			printed[key] = true
 		}
 		if _, err := fmt.Fprintln(stdout, lines[i]); err != nil {
 			fmt.Fprintf(stderr, "snappr: fatal: failed to write stdout: %v\n", err)

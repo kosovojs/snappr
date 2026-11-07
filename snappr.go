@@ -108,7 +108,7 @@ func (p Period) Compare(other Period) int {
 //
 // All periods are valid and normalized.
 //
-// Copying a Policy value shares its underlying state; use Clone for an
+// Copying a non-empty Policy value shares its underlying state; use Clone for an
 // independent copy.
 type Policy struct {
 	count map[Period]int // Period is normalized and valid
@@ -250,7 +250,7 @@ func ParsePolicy(rule ...string) (Policy, error) {
 			var tmp time.Duration
 			tmp, err = time.ParseDuration(x)
 			vx = int64(tmp / time.Second)
-			if err == nil && tmp%time.Second != 0 {
+			if err == nil && tmp > 0 && tmp%time.Second != 0 {
 				return p, fmt.Errorf("rule %q: interval %q must be a whole number of seconds", s, x)
 			}
 			if err == nil && int64(int(vx)) != vx {

@@ -303,8 +303,46 @@ func TestOnlyMatchCollisionIsNotPruned(t *testing.T) {
 
 	args = append(args[:1:1], append([]string{"--invert"}, args[1:]...)...)
 	status, keep, _ := runMain(args, input)
-	if status != 0 || !strings.Contains(keep, "@1700000000\n") {
+	if status != 0 || keep != "@1700000000\n@1700000000\n" {
 		t.Fatalf("keep result: status=%d stdout=%q", status, keep)
+	}
+}
+
+func TestIdenticalTextWarningIsEmittedOncePerText(t *testing.T) {
+	const input = "100\n100\n200\n"
+
+	_, _, stderr := runMain([]string{"snappr", "-w", "-s", "daily"}, input)
+	for _, want := range []string{":: identical to a retained record", "pruning 1/3 snapshots"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("missing %q: stderr=%q", want, stderr)
+		}
+	}
+	if got := strings.Count(stderr, "not pruning"); got != 1 {
+		t.Fatalf("want 1 warning, got %d: stderr=%q", got, stderr)
+	}
+
+	_, _, stderr = runMain([]string{"snappr", "-q", "-w", "-s", "daily"}, input)
+	if strings.Contains(stderr, "not pruning") {
+		t.Fatalf("--quiet did not suppress warning: stderr=%q", stderr)
+	}
+}
+
+func TestWhitespaceVariantsNeverOnOppositeSides(t *testing.T) {
+	const input = "100\n100 \n200\n"
+	_, prune, _ := runMain([]string{"snappr", "daily"}, input)
+	_, keep, _ := runMain([]string{"snappr", "--invert", "daily"}, input)
+
+	kept := make(map[string]bool)
+	for _, line := range strings.Split(keep, "\n") {
+		kept[strings.TrimSpace(line)] = true
+	}
+	pruned := make(map[string]bool)
+	for _, line := range strings.Split(prune, "\n") {
+		key := strings.TrimSpace(line)
+		if line != "" && (kept[key] || pruned[key]) {
+			t.Fatalf("%q is in both outputs or duplicated:\nprune=%q\nkeep=%q", line, prune, keep)
+		}
+		pruned[key] = true
 	}
 }
 
@@ -320,13 +358,14 @@ func TestPruneAndKeepOutputsNeverShareText(t *testing.T) {
 	for _, tc := range []struct {
 		args  []string
 		input string
+		texts []string // distinct output texts expected (after --only projection)
 	}{
-		{[]string{"snappr", "1@last"}, "100\n100\n100\n"},
-		{[]string{"snappr", "daily"}, "100\n200\n100\n86400\n100\n"},
-		{[]string{"snappr", "2@secondly"}, "1\n2\n3\n1\n3\nbad\n"},
-		{[]string{"snappr", "-E", "-o", "-e", `@([0-9]+)$`, "1@last"}, "a@5\nb@5\nc@6\nd@4\n"},
-		{[]string{"snappr", "-E", "-n", "-o", "-e", `^([a-z]+)@([0-9]+)$`, "1@last"}, "a@1\nb@1\na@2\nb@1\n"},
-		{[]string{"snappr", "-E", "-n", "-e", `^([a-z]+) .*@([0-9]+)$`, "1@last"}, "a x@1\nb x@1\na x@2\nb x@1\n"},
+		{[]string{"snappr", "1@last"}, "100\n100\n100\n", []string{"100"}},
+		{[]string{"snappr", "daily"}, "100\n200\n100\n86400\n100\n", []string{"100", "200", "86400"}},
+		{[]string{"snappr", "2@secondly"}, "1\n2\n3\n1\n3\nbad\n", []string{"1", "2", "3", "bad"}},
+		{[]string{"snappr", "-E", "-o", "-e", `@([0-9]+)$`, "1@last"}, "a@5\nb@5\nc@6\nd@4\n", []string{"@5", "@6", "@4"}},
+		{[]string{"snappr", "-E", "-n", "-o", "-e", `^([a-z]+)@([0-9]+)$`, "1@last"}, "a@1\nb@1\na@2\nb@1\n", []string{"a@1", "b@1", "a@2"}},
+		{[]string{"snappr", "-E", "-n", "-e", `^([a-z]+) .*@([0-9]+)$`, "1@last"}, "a x@1\nb x@1\na x@2\nb x@1\n", []string{"a x@1", "b x@1", "a x@2"}},
 	} {
 		status, prune, _ := runMain(tc.args, tc.input)
 		if status != 0 {
@@ -341,10 +380,27 @@ func TestPruneAndKeepOutputsNeverShareText(t *testing.T) {
 		for _, line := range strings.Split(keep, "\n") {
 			kept[line] = line != ""
 		}
+		union := maps.Clone(kept)
+		pruned := make(map[string]bool)
 		for _, line := range strings.Split(prune, "\n") {
 			if kept[line] {
 				t.Fatalf("%v: %q is in both outputs:\nprune=%q\nkeep=%q", tc.args, line, prune, keep)
 			}
+			if line != "" {
+				if pruned[line] {
+					t.Fatalf("%v: %q is duplicated in prune output: %q", tc.args, line, prune)
+				}
+				pruned[line] = true
+				union[line] = true
+			}
+		}
+		delete(union, "")
+		want := make(map[string]bool)
+		for _, text := range tc.texts {
+			want[text] = true
+		}
+		if !maps.Equal(union, want) {
+			t.Fatalf("%v: distinct output texts differ:\nwant=%v\n got=%v", tc.args, want, union)
 		}
 	}
 }

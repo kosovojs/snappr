@@ -1,3 +1,4 @@
+FIXME(monthly-alignment): expected stdout/stderr must be regenerated after monthly:N alignment fix
 -- args --
 snappr -swv
     -e "path example\.([0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}:[0-9]{2}:[0-9]{2})\$" -Eo
