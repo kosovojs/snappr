@@ -62,14 +62,14 @@ usage: snappr [options] policy...
 
 options:
   -E, --extended-regexp     use full regexp syntax rather than POSIX (see pkg.go.dev/regexp/syntax)
-  -e, --extract string      extract the timestamp from each input line using a regexp with one capture group, or two with --group-by-name
-  -h, --help                show this help text
+  -e, --extract string      extract the timestamp using a regexp with one capture group, or two with --group-by-name
   -n, --group-by-name       apply the policy independently by name (capture group 1 is the name and capture group 2 is the timestamp)
+  -h, --help                show this help text
   -v, --invert              output the snapshots to keep instead of the ones to prune
   -o, --only                only print the part of the line matching the regexp
   -p, --parse string        parse the timestamp using the specified Go time format (see pkg.go.dev/time#pkg-constants and the examples below) rather than a unix timestamp
   -Z, --parse-timezone tz   use a specific timezone rather than whatever is set for --timezone if no timezone is parsed from the timestamp itself
-  -q, --quiet               do not show warnings about invalid or unmatched input lines
+  -q, --quiet               do not show warnings
   -s, --summarize           summarize retention policy results to stderr
   -z, --timezone tz         convert all timestamps to this timezone while pruning snapshots (use "local" for the default system timezone) (default UTC)
   -w, --why                 explain why each snapshot is being kept to stderr
@@ -83,6 +83,7 @@ time format examples:
 policy: N@unit:X
   - keep the last N snapshots every X units
   - omit the N@ to keep an infinite number of snapshots
+  - a negative N also keeps an infinite number (pass -- before such policies, e.g. -- -1@daily)
   - if :X is omitted, it defaults to :1
   - there may only be one N specified for each unit:X pair
 
@@ -99,10 +100,22 @@ notes:
   - invalid/unmatched input lines are ignored, or passed through if --invert is set (and a warning is printed unless --quiet is set)
   - everything will still work correctly even if timezones are different
   - snapshots are always ordered by their real (i.e., UTC) time
-  - if using --parse-in, beware of duplicate timestamps at DST transitions (if the offset isn't included whatever you use as the
-    snapshot name, and your timezone has DST, you may end up with two snapshots for different times with the same name.
+  - if using --parse-timezone, beware of duplicate timestamps at DST transitions (if the offset isn't included whatever you use as the
+    snapshot name, and your timezone has DST, you may end up with two snapshots for different times with the same name)
   - timezones will only affect the exact point at which calendar days/months/years are split
 ```
+
+#### Policy semantics
+
+Intervals are calendar-aligned buckets, and the first snapshot in each bucket is kept:
+
+- `monthly:N` buckets start at January (e.g., `monthly:3` is calendar quarters, and `monthly:12` is the same as `yearly`).
+- `yearly:N` buckets are aligned to year 0 (e.g., `yearly:10` is 2020-2029).
+- `daily:N` counts days from a fixed epoch, so it is not week-aligned.
+- `secondly` buckets use real (UTC-based) time, regardless of timezone.
+- A negative N means infinite; on the CLI, put `--` before it (e.g., `snappr -- -1@daily`).
+
+Note: `monthly:N` (N>1) buckets were previously offset by one month, so upgrading changes which snapshots those rules keep.
 
 #### Library Example
 
@@ -110,7 +123,7 @@ notes:
 var times []time.Time
 // ...
 
-var policy Policy
+var policy snappr.Policy
 policy.MustSet(snappr.Yearly, 5, -1)
 policy.MustSet(snappr.Yearly, 2, 10)
 policy.MustSet(snappr.Yearly, 1, 3)
@@ -123,14 +136,19 @@ policy.MustSet(snappr.Last, 1, 3)
 keep, need := snappr.Prune(times, policy, time.UTC)
 for at, reason := range keep {
     if len(reason) == 0 {
-        // delete the snapshot times[at]
+        fmt.Println("delete", times[at])
     }
 }
+fmt.Println("unfulfilled:", need) // may contain satisfied (zero-count) periods, which MarshalText omits
 ```
 
 #### Production safety
 
-Snappr only classifies records; it never deletes snapshots or interprets records as filenames. Default output is the prune-candidate set, while `--invert` outputs the retain set. Invalid or unmatched non-empty records are excluded from prune output and passed through in retain output. With `--only`, every regexp-matched record is projected to the complete match even if its timestamp is invalid; unmatched records remain unchanged.
+Snappr only classifies records; it never deletes snapshots or interprets records as filenames. Default output is the prune-candidate set, while `--invert` outputs the retain set. Invalid or unmatched non-empty records are excluded from prune output and passed through in retain output. With `--only`, every regexp-matched record is projected to the complete match even if its timestamp is invalid; unmatched records remain unchanged. Unix timestamps outside Go's representable range are treated as invalid (kept side).
+
+A name (compared after trimming surrounding whitespace) that is retained by any record is never printed as a prune candidate; Snappr warns "not pruning ... identical to a retained record" instead. This is common with `--only` on recursive snapshots (e.g., `tank/a@T` and `tank/b@T`) or duplicate input lines. As a result, prune and `--invert` output never share a name. Prune output prints each name once.
+
+All stdout is written in one go after classification. `-q` silences all warnings.
 
 When a downstream command is destructive, stage Snappr's complete output first and check its exit status before invoking that command. A live `snappr | delete-command` pipeline is not transactional: a consumer can act on early records before a later read or write failure is known.
 
