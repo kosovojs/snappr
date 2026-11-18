@@ -1,0 +1,13 @@
+-- args --
+snappr -p '2006-01-02T15:04:05Z07:00' -z Europe/Riga -w daily
+-- stdin --
+2023-01-01T21:30:00Z
+2023-01-01T23:30:00Z
+2023-01-02T00:30:00Z
+2023-01-02T22:30:00Z
+-- stdout --
+2023-01-02T00:30:00Z
+-- stderr --
+snappr: why: keep [1/4] Sun 2023 Jan  1 23:30:00 :: 1 day
+snappr: why: keep [2/4] Mon 2023 Jan  2 01:30:00 :: 1 day
+snappr: why: keep [4/4] Tue 2023 Jan  3 00:30:00 :: 1 day

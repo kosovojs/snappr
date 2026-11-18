@@ -1,0 +1,17 @@
+-- args --
+snappr -v -e '^id=(.*)$' 1@last
+-- stdin --
+id=1672531200
+junk
+id=abc
+   
+id=1672617600
+-- stdout --
+junk
+id=abc
+   
+id=1672617600
+-- stderr --
+snappr: warning: failed extract timestamp from "junk" using regexp "^id=(.*)$"
+snappr: warning: failed to parse unix timestamp "abc": strconv.ParseInt: parsing "abc": invalid syntax
+snappr: warning: failed extract timestamp from "   " using regexp "^id=(.*)$"

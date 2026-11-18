@@ -1,0 +1,9 @@
+-- args --
+snappr -o 1@last
+-- stdin --
+1672531200
+1672617600
+-- stdout --
+1672531200
+-- stderr --
+snappr: warning: --only has no effect without --extract

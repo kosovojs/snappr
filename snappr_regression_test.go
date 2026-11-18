@@ -269,3 +269,91 @@ func ExamplePrune_classification() {
 	// 1: keep=false
 	// 2: keep=true
 }
+
+func TestPruneMonthlyIntervalAlignsToCalendarYear(t *testing.T) {
+	var snapshots []time.Time
+	for i := 0; i < 15; i++ {
+		snapshots = append(snapshots, time.Date(2023, time.January+time.Month(i), 1, 0, 0, 0, 0, time.UTC))
+	}
+	retained := func(policy string) []int {
+		p, err := ParsePolicy(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keep, _ := Prune(snapshots, p, time.UTC)
+		var got []int
+		for i, reasons := range keep {
+			if len(reasons) != 0 {
+				got = append(got, i)
+			}
+		}
+		return got
+	}
+	if got, want := retained("monthly:3"), []int{0, 3, 6, 9, 12}; !slices.Equal(got, want) {
+		t.Fatalf("monthly:3: want %v, got %v", want, got)
+	}
+	if got, want := retained("monthly:12"), retained("yearly"); !slices.Equal(got, want) {
+		t.Fatalf("monthly:12 != yearly: %v vs %v", got, want)
+	}
+}
+
+func TestNeedOmitsSatisfiedPeriodsFromMarshalText(t *testing.T) {
+	snapshots := []time.Time{
+		time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC),
+		time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC),
+	}
+	policy, err := ParsePolicy("1@last")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, need := Prune(snapshots, policy, time.UTC)
+	if b, _ := need.MarshalText(); len(b) != 0 {
+		t.Fatalf("want empty, got %q", b)
+	}
+	if n := need.Get(Period{Unit: Last, Interval: 1}); n != 0 {
+		t.Fatalf("want 0, got %d", n)
+	}
+}
+
+func TestParsePolicyRejectsSubSecondSecondlyIntervals(t *testing.T) {
+	for _, s := range []string{"secondly:1.5s", "secondly:1999ms"} {
+		if _, err := ParsePolicy(s); err == nil {
+			t.Errorf("%s: expected error", s)
+		}
+	}
+	p, err := ParsePolicy("secondly:2000ms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Get(Period{Unit: Secondly, Interval: 2}) == 0 {
+		t.Fatal("expected secondly:2 to be set")
+	}
+}
+
+// Sorting must use wall-clock instants. time.Time.Compare uses monotonic
+// readings when both sides have one, so after a wall-clock jump (NTP, manual
+// set) the monotonic order can disagree with the wall order that bucketing uses.
+// Monotonic readings can't be faked, so check Prune ignores them.
+func TestPruneIgnoresMonotonicReadings(t *testing.T) {
+	now := time.Now()
+	policy, err := ParsePolicy("3@secondly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, offsets := range [][]time.Duration{
+		{0, time.Second, 2 * time.Second, 3 * time.Second},
+		{3 * time.Second, 2 * time.Second, time.Second, 0},
+	} {
+		var mono, wall []time.Time
+		for _, d := range offsets {
+			mono = append(mono, now.Add(d))
+			wall = append(wall, now.Add(d).Truncate(-1))
+		}
+		got, _ := Prune(mono, policy, time.UTC)
+		want, _ := Prune(wall, policy, time.UTC)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("offsets %v:\nwant: %#v\n got: %#v", offsets, want, got)
+		}
+	}
+}

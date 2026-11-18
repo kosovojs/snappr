@@ -378,7 +378,7 @@ func TestPrune(t *testing.T) {
 			policy.MustSet(Secondly, int(time.Hour/time.Second), 6)
 			policy.MustSet(Last, 1, 3)
 
-			return times, policy, "a48749a9d6e92ebbc09a5fb3b46a304879fdb1aeebe28264c0885cea0048f8d1"
+			return times, policy, "0fb42f2b852fef1aec7df78ba34ab1a59c56c1e8f390bff0bd2a1153c024b4f2"
 		},
 		func() (times []time.Time, policy Policy, output string) {
 			t := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -396,7 +396,7 @@ func TestPrune(t *testing.T) {
 			policy.MustSet(Monthly, 2, 6)
 			policy.MustSet(Yearly, 1, -1)
 
-			return times, policy, "023064a5ac204ebd8db07a8e0f3e7aa6d33fb59c48a6c5728509676c43b7f0fd"
+			return times, policy, "829e3fde9fd671b642d4e96066e4ce46ba0b6a0c4a29a11236e15c646735ce02"
 		},
 		// TODO: more cases
 	} {
@@ -455,9 +455,7 @@ func TestPrune(t *testing.T) {
 	}
 }
 
-// TODO: fuzz it (generating a random policy, and a seed for generating 1000
-// random time intervals), checking the guarantees for Prune (and ensuring it
-// works adding the times one at a time).
+// See FuzzPruneRandomPolicy in snappr_fuzz_test.go.
 
 func ExamplePrune() {
 	var times []time.Time
@@ -503,16 +501,14 @@ func ExamplePrune() {
 	// Tue Jan  1 00:02:48 2008 | 2 year
 	// Fri Jan  1 00:42:16 2010 | 2 year, 5 year
 	// Sat Jan  1 00:11:21 2011 | 1 year
-	// Thu Dec  1 00:18:09 2011 | 6 month
-	// Sun Jan  1 00:01:12 2012 | 1 year, 2 year
-	// Fri Jun  1 00:43:36 2012 | 6 month
-	// Mon Oct  1 00:13:28 2012 | 2 month
-	// Sat Dec  1 00:38:47 2012 | 2 month, 6 month
-	// Tue Jan  1 00:01:04 2013 | 1 year
-	// Fri Feb  1 00:33:52 2013 | 2 month
-	// Mon Apr  1 00:27:37 2013 | 2 month
-	// Sat Jun  1 00:12:41 2013 | 2 month, 6 month
-	// Thu Aug  1 00:38:00 2013 | 2 month
+	// Sun Jan  1 00:01:12 2012 | 6 month, 1 year, 2 year
+	// Sun Jul  1 00:36:07 2012 | 6 month
+	// Thu Nov  1 00:46:16 2012 | 2 month
+	// Tue Jan  1 00:01:04 2013 | 2 month, 6 month, 1 year
+	// Fri Mar  1 00:35:20 2013 | 2 month
+	// Wed May  1 00:30:39 2013 | 2 month
+	// Mon Jul  1 00:05:12 2013 | 2 month, 6 month
+	// Sun Sep  1 00:00:17 2013 | 2 month
 	// Mon Sep  2 00:01:04 2013 | 1 day
 	// Tue Sep  3 00:31:51 2013 | 1 day
 	// Wed Sep  4 00:01:37 2013 | 1 day

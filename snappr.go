@@ -16,7 +16,7 @@ type Unit int
 
 const (
 	Last     Unit = iota // snapshot count
-	Secondly             // wallclock seconds
+	Secondly             // unix seconds (timezone-independent)
 	Daily                // calendar days
 	Monthly              // calendar months
 	Yearly               // calendar years
@@ -107,6 +107,9 @@ func (p Period) Compare(other Period) int {
 // Policy defines a retention policy for snapshots.
 //
 // All periods are valid and normalized.
+//
+// Copying a non-empty Policy value shares its underlying state; use Clone for an
+// independent copy.
 type Policy struct {
 	count map[Period]int // Period is normalized and valid
 }
@@ -247,6 +250,9 @@ func ParsePolicy(rule ...string) (Policy, error) {
 			var tmp time.Duration
 			tmp, err = time.ParseDuration(x)
 			vx = int64(tmp / time.Second)
+			if err == nil && tmp > 0 && tmp%time.Second != 0 {
+				return p, fmt.Errorf("rule %q: interval %q must be a whole number of seconds", s, x)
+			}
 			if err == nil && int64(int(vx)) != vx {
 				err = strconv.ErrRange
 			}
@@ -287,6 +293,9 @@ func (p *Policy) UnmarshalText(b []byte) error {
 func (p Policy) MarshalText() ([]byte, error) {
 	var b []byte
 	p.Each(func(period Period, count int) {
+		if count == 0 {
+			return
+		}
 		if b != nil {
 			b = append(b, ' ')
 		}
@@ -327,7 +336,8 @@ func formatSecondlyInterval(interval int) (text string, isDuration bool) {
 
 // Prune prunes the provided list of snapshots, returning a matching slice of
 // periods requiring that snapshot, and the remaining number of snapshots
-// required to fulfill the original policy.
+// required to fulfill the original policy. The returned policy may contain
+// periods with a zero count (satisfied); MarshalText omits them.
 //
 // All snapshots are placed in the provided timezone, and the monotonic time
 // component is removed. The timezone affects the exact point at which calendar
@@ -352,17 +362,23 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 		return
 	}
 
-	// sort the snapshots descending
+	// sort the snapshots ascending
 	sorted := make([]int, len(snapshots))
 	for i := range sorted {
 		sorted[i] = i
 	}
 	slices.SortFunc(sorted, func(a, b int) int {
-		if order := snapshots[a].Compare(snapshots[b]); order != 0 {
+		// strip monotonic readings: bucketing uses wall-clock, so must the sort
+		if order := snapshots[a].Truncate(-1).Compare(snapshots[b].Truncate(-1)); order != 0 {
 			return order
 		}
 		return cmp.Compare(a, b)
 	})
+
+	zoned := make([]time.Time, len(snapshots))
+	for i := range zoned {
+		zoned[i] = snapshots[sorted[i]].In(loc).Truncate(-1)
+	}
 
 	policy.Each(func(period Period, count int) {
 		var (
@@ -373,7 +389,7 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 		// start from the beginning, marking the first one in each period
 		for i := range snapshots {
 			var current int64
-			switch t := snapshots[sorted[i]].In(loc).Truncate(-1); period.Unit {
+			switch t := zoned[i]; period.Unit {
 			case Last:
 				match[i] = true
 				continue
@@ -388,7 +404,7 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 					int64(t.YearDay())
 			case Monthly:
 				year, month, _ := t.Date()
-				current = (int64(year)*12 + int64(month))
+				current = (int64(year)*12 + int64(month) - 1)
 			case Yearly:
 				current = int64(t.Year())
 			default:
@@ -403,8 +419,7 @@ func Prune(snapshots []time.Time, policy Policy, loc *time.Location) (keep [][]P
 			}
 		}
 		// preserve from the end and stay within the count
-		for i := range match {
-			i = len(match) - 1 - i
+		for i := len(match) - 1; i >= 0; i-- {
 			if count == 0 {
 				break
 			}

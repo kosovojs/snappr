@@ -1,0 +1,28 @@
+-- args --
+snappr -n -E -e '^([a-z]+) ([0-9]+)$' -sw 1@last 2@daily
+-- stdin --
+a 1672531200
+b 1672531200
+c 1672617600
+a 1672617600
+b 1672617600
+b 1672704000
+a 1672704000
+-- stdout --
+a 1672531200
+b 1672531200
+-- stderr --
+snappr: why: keep [2/3] Mon 2023 Jan  2 00:00:00 ("a") :: 1 day
+snappr: why: keep [3/3] Tue 2023 Jan  3 00:00:00 ("a") :: last, 1 day
+snappr: summary ("a"): (1) last
+snappr: summary ("a"): (2) 1 day
+snappr: summary ("a"): pruning 1/3 snapshots
+snappr: why: keep [2/3] Mon 2023 Jan  2 00:00:00 ("b") :: 1 day
+snappr: why: keep [3/3] Tue 2023 Jan  3 00:00:00 ("b") :: last, 1 day
+snappr: summary ("b"): (1) last
+snappr: summary ("b"): (2) 1 day
+snappr: summary ("b"): pruning 1/3 snapshots
+snappr: why: keep [1/1] Mon 2023 Jan  2 00:00:00 ("c") :: last, 1 day
+snappr: summary ("c"): (1) last
+snappr: summary ("c"): (2) 1 day (missing 1)
+snappr: summary ("c"): pruning 0/1 snapshots

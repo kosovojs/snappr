@@ -1,0 +1,10 @@
+-- args --
+snappr -E -o -e '@([0-9]+)$' 1@last
+-- stdin --
+tank/a@1672531200
+tank/a@1672617600
+tank/b@1672617600
+-- stdout --
+@1672531200
+-- stderr --
+snappr: warning: not pruning "@1672617600": identical to a retained record

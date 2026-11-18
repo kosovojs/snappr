@@ -168,10 +168,24 @@ func TestUnrepresentableUnixSecondsStayOnTheSafeSide(t *testing.T) {
 }
 
 func TestRepresentableUnixSecondBoundariesAreClassified(t *testing.T) {
-	const input = "-9223372036854775808\n0\n9223371974719179007\n"
+	const input = "-9223371974719179007\n0\n9223371974719179007\n"
 	status, prune, _ := runMain([]string{"snappr", "1@last"}, input)
-	if status != 0 || prune != "-9223372036854775808\n0\n" {
+	if status != 0 || prune != "-9223371974719179007\n0\n" {
 		t.Fatalf("representable boundary classification failed: status=%d stdout=%q", status, prune)
+	}
+}
+
+func TestVeryNegativeUnixSecondsStayOnTheSafeSide(t *testing.T) {
+	const input = "-9223372036854775808\n0\n"
+
+	status, prune, _ := runMain([]string{"snappr", "1@last"}, input)
+	if status != 0 || prune != "" {
+		t.Fatalf("unrepresentable time entered prune output: status=%d stdout=%q", status, prune)
+	}
+
+	status, keep, _ := runMain([]string{"snappr", "--invert", "1@last"}, input)
+	if status != 0 || keep != input {
+		t.Fatalf("safe-side records changed: status=%d want=%q got=%q", status, input, keep)
 	}
 }
 
@@ -272,4 +286,151 @@ func FuzzMainPartitionsValidGroupedRecords(f *testing.F) {
 			t.Fatal("grouped output is not deterministic")
 		}
 	})
+}
+
+func TestIdenticalTextNeverOnBothSides(t *testing.T) {
+	args := []string{"snappr", "daily"}
+	input := "100\n100\n200\n"
+
+	status, prune, stderr := runMain(args, input)
+	if status != 0 || prune != "200\n" {
+		t.Fatalf("prune result: status=%d stdout=%q", status, prune)
+	}
+	if !strings.Contains(stderr, `snappr: warning: not pruning "100": identical to a retained record`) {
+		t.Fatalf("missing warning: stderr=%q", stderr)
+	}
+
+	status, keep, _ := runMain([]string{"snappr", "--invert", "daily"}, input)
+	if status != 0 || keep != "100\n100\n" {
+		t.Fatalf("keep result: status=%d stdout=%q", status, keep)
+	}
+}
+
+func TestOnlyMatchCollisionIsNotPruned(t *testing.T) {
+	args := []string{"snappr", "-E", "-o", "-e", `@([0-9]+)$`, "daily"}
+	input := "tank/a@1700000000\ntank/b@1700000000\n"
+
+	status, prune, _ := runMain(args, input)
+	if status != 0 || prune != "" {
+		t.Fatalf("prune result: status=%d stdout=%q", status, prune)
+	}
+
+	args = append(args[:1:1], append([]string{"--invert"}, args[1:]...)...)
+	status, keep, _ := runMain(args, input)
+	if status != 0 || keep != "@1700000000\n@1700000000\n" {
+		t.Fatalf("keep result: status=%d stdout=%q", status, keep)
+	}
+}
+
+func TestIdenticalTextWarningIsEmittedOncePerText(t *testing.T) {
+	const input = "100\n100\n100\n200\n"
+
+	_, _, stderr := runMain([]string{"snappr", "-w", "-s", "daily"}, input)
+	for _, want := range []string{":: identical to a retained record", "pruning 1/4 snapshots"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("missing %q: stderr=%q", want, stderr)
+		}
+	}
+	if got := strings.Count(stderr, "not pruning"); got != 1 {
+		t.Fatalf("want 1 warning, got %d: stderr=%q", got, stderr)
+	}
+
+	_, _, stderr = runMain([]string{"snappr", "-q", "-w", "-s", "daily"}, input)
+	if strings.Contains(stderr, "not pruning") {
+		t.Fatalf("--quiet did not suppress warning: stderr=%q", stderr)
+	}
+}
+
+func TestWhitespaceVariantsNeverOnOppositeSides(t *testing.T) {
+	const input = "100\n100 \n200\n"
+	_, prune, _ := runMain([]string{"snappr", "daily"}, input)
+	_, keep, _ := runMain([]string{"snappr", "--invert", "daily"}, input)
+
+	kept := make(map[string]bool)
+	for _, line := range strings.Split(keep, "\n") {
+		kept[strings.TrimSpace(line)] = true
+	}
+	pruned := make(map[string]bool)
+	for _, line := range strings.Split(prune, "\n") {
+		key := strings.TrimSpace(line)
+		if line != "" && (kept[key] || pruned[key]) {
+			t.Fatalf("%q is in both outputs or duplicated:\nprune=%q\nkeep=%q", line, prune, keep)
+		}
+		pruned[key] = true
+	}
+}
+
+func TestPruneOutputIsDeduplicated(t *testing.T) {
+	args := []string{"snappr", "-E", "-o", "-e", `^x ([0-9]+)$`, "1@last"}
+	status, prune, _ := runMain(args, "x 100\nx 100\nx 200\n")
+	if status != 0 || prune != "x 100\n" {
+		t.Fatalf("prune result: status=%d stdout=%q", status, prune)
+	}
+}
+
+func TestPruneAndKeepOutputsNeverShareText(t *testing.T) {
+	for _, tc := range []struct {
+		args  []string
+		input string
+		texts []string // distinct output texts expected (after --only projection)
+	}{
+		{[]string{"snappr", "1@last"}, "100\n100\n100\n", []string{"100"}},
+		{[]string{"snappr", "daily"}, "100\n200\n100\n86400\n100\n", []string{"100", "200", "86400"}},
+		{[]string{"snappr", "2@secondly"}, "1\n2\n3\n1\n3\nbad\n", []string{"1", "2", "3", "bad"}},
+		{[]string{"snappr", "-E", "-o", "-e", `@([0-9]+)$`, "1@last"}, "a@5\nb@5\nc@6\nd@4\n", []string{"@5", "@6", "@4"}},
+		{[]string{"snappr", "-E", "-n", "-o", "-e", `^([a-z]+)@([0-9]+)$`, "1@last"}, "a@1\nb@1\na@2\nb@1\n", []string{"a@1", "b@1", "a@2"}},
+		{[]string{"snappr", "-E", "-n", "-e", `^([a-z]+) .*@([0-9]+)$`, "1@last"}, "a x@1\nb x@1\na x@2\nb x@1\n", []string{"a x@1", "b x@1", "a x@2"}},
+	} {
+		status, prune, _ := runMain(tc.args, tc.input)
+		if status != 0 {
+			t.Fatalf("%v: prune status=%d", tc.args, status)
+		}
+		keepArgs := append(tc.args[:1:1], append([]string{"--invert"}, tc.args[1:]...)...)
+		status, keep, _ := runMain(keepArgs, tc.input)
+		if status != 0 {
+			t.Fatalf("%v: keep status=%d", tc.args, status)
+		}
+		kept := make(map[string]bool)
+		for _, line := range strings.Split(keep, "\n") {
+			kept[line] = line != ""
+		}
+		union := maps.Clone(kept)
+		pruned := make(map[string]bool)
+		for _, line := range strings.Split(prune, "\n") {
+			if kept[line] {
+				t.Fatalf("%v: %q is in both outputs:\nprune=%q\nkeep=%q", tc.args, line, prune, keep)
+			}
+			if line != "" {
+				if pruned[line] {
+					t.Fatalf("%v: %q is duplicated in prune output: %q", tc.args, line, prune)
+				}
+				pruned[line] = true
+				union[line] = true
+			}
+		}
+		delete(union, "")
+		want := make(map[string]bool)
+		for _, text := range tc.texts {
+			want[text] = true
+		}
+		if !maps.Equal(union, want) {
+			t.Fatalf("%v: distinct output texts differ:\nwant=%v\n got=%v", tc.args, want, union)
+		}
+	}
+}
+
+func TestIgnoredFlagWarning(t *testing.T) {
+	const want = "--only has no effect"
+	_, _, stderr := runMain([]string{"snappr", "-o", "last"}, "0\n")
+	if !strings.Contains(stderr, want) {
+		t.Fatalf("missing %q: stderr=%q", want, stderr)
+	}
+	_, _, stderr = runMain([]string{"snappr", "-q", "-o", "last"}, "0\n")
+	if strings.Contains(stderr, want) {
+		t.Fatalf("--quiet did not suppress warning: stderr=%q", stderr)
+	}
+	_, _, stderr = runMain([]string{"snappr", "-e", "(.*)", "-o", "last"}, "0\n")
+	if strings.Contains(stderr, want) {
+		t.Fatalf("unexpected warning: stderr=%q", stderr)
+	}
 }

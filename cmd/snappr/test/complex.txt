@@ -11,10 +11,9 @@ dummy
 path example.2001-01-01_07:30:40
 path example.2002-01-01_07:59:44
 path example.2003-01-01_08:28:48
-path example.2003-10-01_08:19:44
-path example.2003-12-01_08:24:48
+path example.2003-11-01_07:52:48
 path example.2004-01-01_08:57:52
-path example.2004-02-01_09:30:56
+path example.2004-03-01_10:01:52
 path example.2004-04-01_10:34:56
 path example.2004-05-01_06:06:40
 path example.2004-06-01_06:39:44
@@ -43,17 +42,16 @@ snappr: why: keep [   3/6895] Sat 2000 Jan  1 02:00:32 :: 1 year
 snappr: why: keep [1466/6895] Mon 2001 Jan  1 02:30:40 :: 1 year
 snappr: why: keep [2925/6895] Tue 2002 Jan  1 02:59:44 :: 1 year
 snappr: why: keep [4384/6895] Wed 2003 Jan  1 03:28:48 :: 1 year
-snappr: why: keep [5475/6895] Wed 2003 Oct  1 04:19:44 :: 2 month
-snappr: why: keep [5719/6895] Mon 2003 Dec  1 03:24:48 :: 2 month
-snappr: why: keep [5843/6895] Thu 2004 Jan  1 03:57:52 :: 1 year
-snappr: why: keep [5967/6895] Sun 2004 Feb  1 04:30:56 :: 2 month
-snappr: why: keep [6207/6895] Thu 2004 Apr  1 05:34:56 :: 1 month, 2 month
-snappr: why: keep [6326/6895] Sat 2004 May  1 02:06:40 :: 1 month
-snappr: why: keep [6450/6895] Tue 2004 Jun  1 02:39:44 :: 1 month, 2 month
-snappr: why: keep [6570/6895] Thu 2004 Jul  1 03:11:44 :: 1 month
-snappr: why: keep [6694/6895] Sun 2004 Aug  1 03:44:48 :: 1 month, 2 month
+snappr: why: keep [5599/6895] Sat 2003 Nov  1 02:52:48 :: 2 month
+snappr: why: keep [5843/6895] Thu 2004 Jan  1 03:57:52 :: 2 month, 1 year
+snappr: why: keep [6083/6895] Mon 2004 Mar  1 05:01:52 :: 2 month
+snappr: why: keep [6207/6895] Thu 2004 Apr  1 05:34:56 :: 1 month
+snappr: why: keep [6326/6895] Sat 2004 May  1 02:06:40 :: 1 month, 2 month
+snappr: why: keep [6450/6895] Tue 2004 Jun  1 02:39:44 :: 1 month
+snappr: why: keep [6570/6895] Thu 2004 Jul  1 03:11:44 :: 1 month, 2 month
+snappr: why: keep [6694/6895] Sun 2004 Aug  1 03:44:48 :: 1 month
 snappr: why: keep [6798/6895] Fri 2004 Aug 27 04:12:32 :: 7 day
-snappr: why: keep [6818/6895] Wed 2004 Sep  1 04:17:52 :: 1 month
+snappr: why: keep [6818/6895] Wed 2004 Sep  1 04:17:52 :: 1 month, 2 month
 snappr: why: keep [6826/6895] Fri 2004 Sep  3 04:20:00 :: 7 day
 snappr: why: keep [6854/6895] Fri 2004 Sep 10 04:27:28 :: 7 day
 snappr: why: keep [6870/6895] Tue 2004 Sep 14 04:31:44 :: 1 day
@@ -75,7 +73,7 @@ snappr: summary: (4) 7 day
 snappr: summary: (6) 1 month
 snappr: summary: (6) 2 month
 snappr: summary: (*) 1 year
-snappr: summary: pruning 6866/6895 snapshots
+snappr: summary: pruning 6867/6895 snapshots
 -- stdin --
 snapshot path example.1999-12-31_99:00:00
 snapshot path example.1999-12-31_19:00:00
